@@ -7,14 +7,11 @@ import { revalidatePath } from "next/cache"
 const API_BASE = "https://v5.jkt48connect.com/api/team48"
 const API_KEY = "JKTCONNECT"
 
-async function getAccessToken(): Promise<string | null> {
-  const cookieStore = await cookies()
-  return cookieStore.get("t48_access_token")?.value ?? null
-}
-
 export async function updateDisplayName(formData: FormData) {
-  const accessToken = await getAccessToken()
-  if (!accessToken) return redirect("/auth/login")
+  const cookieStore = await cookies()
+  const accessToken = cookieStore.get("t48_access_token")?.value
+
+  if (!accessToken) return redirect("/login")
 
   const displayName = formData.get("display_name")
   if (!displayName || typeof displayName !== "string") {
@@ -32,22 +29,19 @@ export async function updateDisplayName(formData: FormData) {
     })
 
     const data = await res.json()
-
     if (!data.status) {
       return { error: data.message || "Failed to update display name." }
     }
 
-    // Update cached user cookie agar nama baru langsung tampil
-    const cookieStore = await cookies()
+    // Update cookie t48_user dengan nama baru
     const rawUser = cookieStore.get("t48_user")?.value
     if (rawUser) {
       try {
         const user = JSON.parse(rawUser)
-        cookieStore.set("t48_user", JSON.stringify({ ...user, full_name: displayName.trim() }), {
-          path: "/",
-          httpOnly: false,
-          sameSite: "lax",
-        })
+        cookieStore.set("t48_user", JSON.stringify({
+          ...user,
+          full_name: displayName.trim(),
+        }), { path: "/", sameSite: "lax" })
       } catch (_) {}
     }
 
@@ -60,7 +54,5 @@ export async function updateDisplayName(formData: FormData) {
 }
 
 export async function deleteAccount() {
-  // API Team48 belum menyediakan endpoint delete account.
-  // Implementasi ini bisa diisi ketika endpoint tersedia.
   return { error: "Fitur hapus akun belum tersedia. Hubungi admin." }
 }

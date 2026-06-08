@@ -1,46 +1,35 @@
 "use client"
 
 import Link from "next/link"
-import { useEffect, useState } from "react"
-import { useRouter } from "next/navigation"
 import { SettingsIcon } from "lucide-react"
-import { Auth0Logo } from "@/components/auth0-logo"
 import { ModeToggle } from "@/components/mode-toggle"
 import { Button } from "@/components/ui/button"
+import { useAuth } from "@/hooks/useAuth"
 
 export default function DashboardLayout({
   children,
 }: {
   children: React.ReactNode
 }) {
-  const router = useRouter()
-  const [user, setUser] = useState<any>(null)
+  const { user, loading, logout } = useAuth()
 
-  useEffect(() => {
-    const raw = localStorage.getItem("t48_user")
-    const token = localStorage.getItem("t48_access_token")
-    if (!raw || !token) {
-      router.replace("/login")
-      return
-    }
-    setUser(JSON.parse(raw))
-  }, [router])
-
-  const handleLogout = () => {
-    localStorage.removeItem("t48_access_token")
-    localStorage.removeItem("t48_refresh_token")
-    localStorage.removeItem("t48_user")
-    router.replace("/login")
+  // Tampilkan loading spinner, bukan blank screen / null
+  if (loading || !user) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <p className="text-sm text-muted-foreground animate-pulse">
+          Memuat...
+        </p>
+      </div>
+    )
   }
-
-  if (!user) return null
 
   return (
     <div className="min-h-screen flex flex-col">
+      {/* Navbar */}
       <nav className="mx-auto flex w-full max-w-7xl items-center justify-between px-2 py-4 sm:px-8">
         <div className="flex items-center space-x-6">
           <Link href="/dashboard" className="flex items-center space-x-2">
-            <Auth0Logo className="h-6 w-6" />
             <span className="font-mono font-semibold">JKT48Connect</span>
           </Link>
           <Link
@@ -50,13 +39,16 @@ export default function DashboardLayout({
             Home
           </Link>
         </div>
+
         <div className="flex flex-row items-center gap-x-3">
           <ModeToggle />
+
           <Button variant="ghost" asChild className="px-2 py-2">
             <Link href="/dashboard/settings">
               <SettingsIcon className="h-[1.2rem] w-[1.2rem]" />
             </Link>
           </Button>
+
           <div className="flex items-center gap-x-3">
             <div className="hidden sm:flex flex-col text-right">
               <span className="text-sm font-medium leading-none">
@@ -66,24 +58,36 @@ export default function DashboardLayout({
                 {user.membership_type} · {user.role}
               </span>
             </div>
-            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary text-primary-foreground text-sm font-semibold uppercase">
-              {(user.full_name || user.username)?.[0] ?? "U"}
-            </div>
-            <Button variant="outline" size="sm" onClick={handleLogout}>
+
+            {/* Avatar */}
+            {user.avatar ? (
+              <img
+                src={user.avatar}
+                alt={user.username}
+                className="h-8 w-8 rounded-full object-cover"
+              />
+            ) : (
+              <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary text-primary-foreground text-sm font-semibold uppercase">
+                {(user.full_name || user.username)?.[0] ?? "U"}
+              </div>
+            )}
+
+            <Button variant="outline" size="sm" onClick={logout}>
               Logout
             </Button>
           </div>
         </div>
       </nav>
 
+      {/* Content */}
       <main className="mx-auto grid min-h-[calc(100svh-164px)] w-full max-w-7xl px-2 sm:px-8 lg:py-6">
         {children}
       </main>
 
+      {/* Footer */}
       <footer className="mx-auto w-full max-w-7xl px-2 py-6 sm:px-6 lg:px-8">
         <div className="flex justify-between">
           <div className="flex items-center space-x-2">
-            <Auth0Logo className="h-6 w-6" />
             <div className="font-mono font-semibold">
               <Link href="/">JKT48Connect</Link>
             </div>

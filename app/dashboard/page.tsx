@@ -104,7 +104,7 @@ export default function DashboardHome() {
                 Membership Aktif 🎉
               </h3>
               <p className="mt-3 text-muted-foreground text-sm">
-                Kamu memiliki akses penuh ke semua konten JKT48Connect.
+                Kamu memiliki akses penuh ke semua konten T48ID.
                 Membership{" "}
                 <span className="font-medium capitalize text-foreground">
                   {user.membership_type}

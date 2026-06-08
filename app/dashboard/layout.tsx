@@ -30,7 +30,7 @@ export default function DashboardLayout({
       <nav className="mx-auto flex w-full max-w-7xl items-center justify-between px-2 py-4 sm:px-8">
         <div className="flex items-center space-x-6">
           <Link href="/dashboard" className="flex items-center space-x-2">
-            <span className="font-mono font-semibold">JKT48Connect</span>
+            <span className="font-mono font-semibold">T48ID Official</span>
           </Link>
           <Link
             href="/dashboard"
@@ -44,7 +44,7 @@ export default function DashboardLayout({
           <ModeToggle />
 
           <Button variant="ghost" asChild className="px-2 py-2">
-            <Link href="/dashboard/settings">
+            <Link href="/dashboard/account/profile">
               <SettingsIcon className="h-[1.2rem] w-[1.2rem]" />
             </Link>
           </Button>
@@ -89,7 +89,7 @@ export default function DashboardLayout({
         <div className="flex justify-between">
           <div className="flex items-center space-x-2">
             <div className="font-mono font-semibold">
-              <Link href="/">JKT48Connect</Link>
+              <Link href="/">T48ID Official</Link>
             </div>
             <Button variant="link" asChild>
               <Link href="/">Home</Link>

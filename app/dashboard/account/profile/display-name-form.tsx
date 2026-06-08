@@ -1,7 +1,5 @@
 "use client"
-
 import { toast } from "sonner"
-
 import {
   Card,
   CardContent,
@@ -13,7 +11,6 @@ import {
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { SubmitButton } from "@/components/submit-button"
-
 import { updateDisplayName } from "./actions"
 
 interface Props {
@@ -26,7 +23,6 @@ export function DisplayNameForm({ displayName }: Props) {
       <form
         action={async (formData: FormData) => {
           const { error } = await updateDisplayName(formData)
-
           if (error) {
             toast.error(error)
           } else {
@@ -37,7 +33,7 @@ export function DisplayNameForm({ displayName }: Props) {
         <CardHeader>
           <CardTitle>Display Name</CardTitle>
           <CardDescription>
-            Enter a name you would liked to have displayed to other users.
+            Enter a name you would like to have displayed to other users.
           </CardDescription>
         </CardHeader>
         <CardContent>

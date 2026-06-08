@@ -14,28 +14,10 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Button } from "@/components/ui/button"
 import { fetchWithAuth, getCookie, setCookie } from "@/hooks/useAuth"
+import { User } from "@/hooks/useAuth"
 
 const API_BASE = "https://v5.jkt48connect.com/api/team48"
 const API_KEY = "JKTCONNECT"
-
-function getCookie(name: string): string | null {
-  if (typeof document === "undefined") return null
-  const match = document.cookie
-    .split("; ")
-    .find((row) => row.startsWith(`${name}=`))
-  if (!match) return null
-  try {
-    return decodeURIComponent(match.split("=").slice(1).join("="))
-  } catch {
-    return match.split("=").slice(1).join("=")
-  }
-}
-
-function setCookie(name: string, value: string, days: number) {
-  const expires = new Date()
-  expires.setDate(expires.getDate() + days)
-  document.cookie = `${name}=${encodeURIComponent(value)}; expires=${expires.toUTCString()}; path=/; SameSite=Lax`
-}
 
 interface Props {
   user: User
@@ -67,13 +49,11 @@ export function ProfileForm({ user }: Props) {
     const file = e.target.files?.[0]
     if (!file) return
 
-    // Validasi ukuran max 2MB
     if (file.size > 2 * 1024 * 1024) {
       toast.error("Ukuran foto maksimal 2MB")
       return
     }
 
-    // Validasi tipe file
     if (!["image/jpeg", "image/png", "image/webp"].includes(file.type)) {
       toast.error("Format foto harus JPG, PNG, atau WebP")
       return
@@ -85,66 +65,68 @@ export function ProfileForm({ user }: Props) {
     reader.onload = (ev) => {
       const result = ev.target?.result as string
       setAvatarPreview(result)
-      // Simpan base64 tanpa prefix data URI
       setAvatarBase64(result.split(",")[1])
     }
     reader.readAsDataURL(file)
   }
 
- // handleSubmit — ganti fetch manual dengan fetchWithAuth
-const handleSubmit = async (e: React.FormEvent) => {
-  e.preventDefault()
-  setLoading(true)
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setLoading(true)
 
-  try {
-    const body: Record<string, string> = {}
-    if (form.full_name.trim()) body.full_name = form.full_name.trim()
-    if (form.whatsapp.trim()) body.whatsapp = form.whatsapp.trim()
-    if (avatarBase64) {
-      body.avatar_base64 = avatarBase64
-      body.avatar_mime = avatarMime
-    }
+    try {
+      const body: Record<string, string> = {}
+      if (form.full_name.trim()) body.full_name = form.full_name.trim()
+      if (form.whatsapp.trim()) body.whatsapp = form.whatsapp.trim()
+      if (avatarBase64) {
+        body.avatar_base64 = avatarBase64
+        body.avatar_mime = avatarMime
+      }
 
-    if (Object.keys(body).length === 0) {
-      toast.error("Tidak ada perubahan yang disimpan")
+      if (Object.keys(body).length === 0) {
+        toast.error("Tidak ada perubahan yang disimpan")
+        setLoading(false)
+        return
+      }
+
+      const res = await fetchWithAuth(
+        `${API_BASE}/profile/update?apikey=${API_KEY}`,
+        { method: "PUT", body: JSON.stringify(body) }
+      )
+      const data = await res.json()
+
+      if (!data.status) {
+        toast.error(data.message || "Gagal memperbarui profil")
+        return
+      }
+
+      // Update cookie t48_user
+      const rawUser = getCookie("t48_user")
+      if (rawUser) {
+        try {
+          const cached = JSON.parse(rawUser)
+          setCookie(
+            "t48_user",
+            JSON.stringify({
+              ...cached,
+              full_name: data.data.full_name,
+              whatsapp: data.data.whatsapp,
+              avatar: data.data.avatar,
+            }),
+            30
+          )
+        } catch (_) {}
+      }
+
+      setAvatarBase64(null)
+      if (data.data.avatar) setAvatarPreview(data.data.avatar)
+      toast.success("Profil berhasil diperbarui!")
+    } catch {
+      toast.error("Terjadi kesalahan jaringan. Coba lagi.")
+    } finally {
       setLoading(false)
-      return
     }
-
-    const res = await fetchWithAuth(
-      `${API_BASE}/profile/update?apikey=${API_KEY}`,
-      { method: "PUT", body: JSON.stringify(body) }
-    )
-    const data = await res.json()
-
-    if (!data.status) {
-      toast.error(data.message || "Gagal memperbarui profil")
-      return
-    }
-
-    // Update cookie
-    const rawUser = getCookie("t48_user")
-    if (rawUser) {
-      try {
-        const cached = JSON.parse(rawUser)
-        setCookie("t48_user", JSON.stringify({
-          ...cached,
-          full_name: data.data.full_name,
-          whatsapp: data.data.whatsapp,
-          avatar: data.data.avatar,
-        }), 30)
-      } catch (_) {}
-    }
-
-    setAvatarBase64(null)
-    if (data.data.avatar) setAvatarPreview(data.data.avatar)
-    toast.success("Profil berhasil diperbarui!")
-  } catch {
-    toast.error("Terjadi kesalahan jaringan. Coba lagi.")
-  } finally {
-    setLoading(false)
   }
-}
 
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
@@ -233,7 +215,6 @@ const handleSubmit = async (e: React.FormEvent) => {
             />
           </div>
 
-          {/* Read-only info */}
           <div className="grid gap-1.5">
             <Label>Username</Label>
             <Input value={user.username} disabled className="bg-muted" />

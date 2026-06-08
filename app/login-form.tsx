@@ -2,7 +2,6 @@
 
 import { useState } from "react"
 import Link from "next/link"
-import Cookies from "js-cookie"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { SubmitButton } from "@/components/submit-button"
@@ -10,13 +9,17 @@ import { SubmitButton } from "@/components/submit-button"
 const API_BASE = "https://v5.jkt48connect.com/api/team48"
 const API_KEY = "JKTCONNECT"
 
+function setCookie(name: string, value: string, days: number) {
+  const expires = new Date()
+  expires.setDate(expires.getDate() + days)
+  // encodeURIComponent agar JSON tidak rusak
+  document.cookie = `${name}=${encodeURIComponent(value)}; expires=${expires.toUTCString()}; path=/; SameSite=Lax`
+}
+
 export function LoginForm() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [formData, setFormData] = useState({
-    login: "",
-    password: "",
-  })
+  const [formData, setFormData] = useState({ login: "", password: "" })
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setFormData((prev) => ({ ...prev, [e.target.name]: e.target.value }))
@@ -50,45 +53,33 @@ export function LoginForm() {
           return
         }
         if (data.attempts_remaining !== undefined) {
-          setError(
-            `${data.message} (${data.attempts_remaining} percobaan tersisa)`
-          )
+          setError(`${data.message} (${data.attempts_remaining} percobaan tersisa)`)
           return
         }
         setError(data.message || "Login gagal")
         return
       }
 
-      const { access_token, refresh_token, expires_in } = data.data.tokens
+      const { access_token, refresh_token } = data.data.tokens
       const user = data.data.user
 
-      // Simpan ke cookie agar bisa dibaca server components
-      // access_token: sesuai TTL dari API (default 15 menit)
-      const accessExpiresDays = (expires_in ?? 900) / 86400
-      Cookies.set("t48_access_token", access_token, {
-        expires: accessExpiresDays,
-        sameSite: "lax",
-        path: "/",
-      })
-      // refresh_token: 30 hari
-      Cookies.set("t48_refresh_token", refresh_token, {
-        expires: 30,
-        sameSite: "lax",
-        path: "/",
-      })
-      // user info (non-sensitif, untuk client-side display)
-      Cookies.set("t48_user", JSON.stringify(user), {
-        expires: 30,
-        sameSite: "lax",
-        path: "/",
-      })
+      // Pakai native document.cookie agar pasti tersimpan
+      // access_token: 1 hari (refresh otomatis via useAuth)
+      setCookie("t48_access_token", access_token, 1)
+      setCookie("t48_refresh_token", refresh_token, 30)
+      setCookie("t48_user", JSON.stringify(user), 30)
 
-      // Bersihkan localStorage lama jika ada
-      localStorage.removeItem("t48_access_token")
-      localStorage.removeItem("t48_refresh_token")
-      localStorage.removeItem("t48_user")
+      // Verifikasi cookie tersimpan sebelum redirect
+      const check = document.cookie.includes("t48_access_token")
+      console.log("Cookie tersimpan:", check, document.cookie)
 
-      window.location.href = "/dashboard"
+      if (!check) {
+        setError("Gagal menyimpan sesi. Coba refresh halaman.")
+        return
+      }
+
+      // Gunakan replace agar tidak bisa back ke login
+      window.location.replace("/dashboard")
     } catch {
       setError("Terjadi kesalahan jaringan. Coba lagi.")
     } finally {

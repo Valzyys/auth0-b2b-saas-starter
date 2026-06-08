@@ -30,13 +30,31 @@ export default function DashboardLayout({
       <nav className="mx-auto flex w-full max-w-7xl items-center justify-between px-2 py-4 sm:px-8">
         <div className="flex items-center space-x-6">
           <Link href="/dashboard" className="flex items-center space-x-2">
-            <span className="font-mono font-semibold">T48ID Official</span>
+            <span className="font-mono font-semibold">T48ID</span>
           </Link>
           <Link
             href="/dashboard"
             className="text-sm font-medium text-muted-foreground transition-colors hover:text-foreground"
           >
             Home
+          </Link>
+          <Link
+            href="/show"
+            className="text-sm font-medium text-muted-foreground transition-colors hover:text-foreground"
+          >
+            Jadwal
+          </Link>
+          <Link
+            href="/membership"
+            className="text-sm font-medium text-muted-foreground transition-colors hover:text-foreground"
+          >
+            Membership
+          </Link>
+          <Link
+            href="/live"
+            className="text-sm font-medium text-muted-foreground transition-colors hover:text-foreground"
+          >
+            Live
           </Link>
         </div>
 

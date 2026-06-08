@@ -155,7 +155,7 @@ export default function DashboardHome() {
                 Nikmati akses penuh ke live streaming JKT48, konten eksklusif,
                 dan fitur premium lainnya dengan berlangganan membership.
               </p>
-              
+              <a
                 href="/dashboard/membership"
                 className="mt-6 inline-flex items-center justify-center rounded-md bg-primary px-6 py-2.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors"
               >
@@ -181,7 +181,7 @@ export default function DashboardHome() {
                 })}
                 .
               </p>
-              
+              <a
                 href="/live"
                 className="mt-6 inline-flex items-center justify-center rounded-md bg-primary px-6 py-2.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors"
               >

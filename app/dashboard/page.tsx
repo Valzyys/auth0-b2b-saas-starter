@@ -1,73 +1,9 @@
 "use client"
 
-import { useEffect, useState } from "react"
-import { useRouter } from "next/navigation"
-import Cookies from "js-cookie"
-
-const API_BASE = "https://v5.jkt48connect.com/api/team48"
-const API_KEY = "JKTCONNECT"
-
-type User = {
-  user_id: string
-  account_id: string
-  username: string
-  email: string
-  full_name: string | null
-  avatar: string | null
-  role: string
-  membership_type: string
-  membership_expired_at: string | null
-  is_verified: boolean
-  referral_code: string | null
-}
+import { useAuth } from "@/hooks/useAuth"
 
 export default function DashboardHome() {
-  const router = useRouter()
-  const [user, setUser] = useState<User | null>(null)
-  const [profile, setProfile] = useState<User | null>(null)
-  const [loading, setLoading] = useState(true)
-
-  useEffect(() => {
-    const raw = Cookies.get("t48_user")
-    const token = Cookies.get("t48_access_token")
-
-    if (!raw || !token) {
-      router.replace("/login")
-      return
-    }
-
-    let parsed: User
-    try {
-      parsed = JSON.parse(raw) as User
-    } catch {
-      router.replace("/login")
-      return
-    }
-
-    setUser(parsed)
-
-    // Fetch fresh profile dari API
-    fetch(`${API_BASE}/profile/me?apikey=${API_KEY}`, {
-      headers: { Authorization: `Bearer ${token}` },
-    })
-      .then((r) => r.json())
-      .then((data) => {
-        if (data.status) {
-          setProfile(data.data)
-          // Update cookie user dengan data terbaru
-          Cookies.set("t48_user", JSON.stringify(data.data), {
-            expires: 30,
-            sameSite: "lax",
-            path: "/",
-          })
-        } else if (data.message?.toLowerCase().includes("token")) {
-          // Token expired atau invalid, coba refresh
-          handleTokenRefresh(router)
-        }
-      })
-      .catch(() => {})
-      .finally(() => setLoading(false))
-  }, [router])
+  const { user, loading } = useAuth()
 
   if (loading || !user) {
     return (
@@ -77,15 +13,15 @@ export default function DashboardHome() {
     )
   }
 
-  const u = profile ?? user
   const isActive =
-    u.membership_type !== "free" &&
-    !!u.membership_expired_at &&
-    new Date(u.membership_expired_at) > new Date()
+    user.membership_type !== "free" &&
+    !!user.membership_expired_at &&
+    new Date(user.membership_expired_at) > new Date()
 
   const daysRemaining = isActive
     ? Math.ceil(
-        (new Date(u.membership_expired_at!).getTime() - Date.now()) / 86400000
+        (new Date(user.membership_expired_at!).getTime() - Date.now()) /
+          86400000
       )
     : 0
 
@@ -94,16 +30,17 @@ export default function DashboardHome() {
       {/* Greeting */}
       <div>
         <h1 className="text-2xl font-bold tracking-tight">
-          Halo, {u.full_name || u.username} 👋
+          Halo, {user.full_name || user.username} 👋
         </h1>
         <p className="text-muted-foreground text-sm mt-1">
           ID Akun:{" "}
-          <span className="font-mono font-medium">{u.account_id}</span>
-          {u.referral_code && (
+          <span className="font-mono font-medium">{user.account_id}</span>
+          {user.referral_code && (
             <>
-              {" "}
-              · Kode Referral:{" "}
-              <span className="font-mono font-medium">{u.referral_code}</span>
+              {" "}· Kode Referral:{" "}
+              <span className="font-mono font-medium">
+                {user.referral_code}
+              </span>
             </>
           )}
         </p>
@@ -113,30 +50,29 @@ export default function DashboardHome() {
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
         <StatCard
           label="Membership"
-          value={u.membership_type}
+          value={user.membership_type}
           sub={isActive ? `${daysRemaining} hari tersisa` : "Tidak aktif"}
           capitalize
         />
         <StatCard
           label="Role"
-          value={u.role}
+          value={user.role}
           sub="Level akun kamu"
           capitalize
         />
         <StatCard
           label="Status Email"
-          value={u.is_verified ? "Verified" : "Unverified"}
-          sub={u.is_verified ? "Email terverifikasi" : "Cek inbox kamu"}
+          value={user.is_verified ? "Verified" : "Unverified"}
+          sub={user.is_verified ? "Email terverifikasi" : "Cek inbox kamu"}
         />
         <StatCard
           label="Expired"
           value={
             isActive
-              ? new Date(u.membership_expired_at!).toLocaleDateString("id-ID", {
-                  day: "numeric",
-                  month: "short",
-                  year: "numeric",
-                })
+              ? new Date(user.membership_expired_at!).toLocaleDateString(
+                  "id-ID",
+                  { day: "numeric", month: "short", year: "numeric" }
+                )
               : "—"
           }
           sub={isActive ? "Tanggal berakhir" : "Belum berlangganan"}
@@ -171,14 +107,13 @@ export default function DashboardHome() {
                 Kamu memiliki akses penuh ke semua konten JKT48Connect.
                 Membership{" "}
                 <span className="font-medium capitalize text-foreground">
-                  {u.membership_type}
+                  {user.membership_type}
                 </span>{" "}
                 kamu aktif hingga{" "}
-                {new Date(u.membership_expired_at!).toLocaleDateString("id-ID", {
-                  day: "numeric",
-                  month: "long",
-                  year: "numeric",
-                })}
+                {new Date(user.membership_expired_at!).toLocaleDateString(
+                  "id-ID",
+                  { day: "numeric", month: "long", year: "numeric" }
+                )}
                 .
               </p>
               <a
@@ -194,58 +129,6 @@ export default function DashboardHome() {
     </div>
   )
 }
-
-// ── Helper: auto refresh token ──────────────────────────────────────────────
-
-async function handleTokenRefresh(router: ReturnType<typeof useRouter>) {
-  const refreshToken = Cookies.get("t48_refresh_token")
-  if (!refreshToken) {
-    clearAuthAndRedirect(router)
-    return
-  }
-
-  try {
-    const res = await fetch(
-      `${API_BASE}/auth/refresh?apikey=${API_KEY}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ refresh_token: refreshToken }),
-      }
-    )
-    const data = await res.json()
-
-    if (data.status) {
-      const { access_token, refresh_token, expires_in } = data.data
-      const accessExpiresDays = (expires_in ?? 900) / 86400
-      Cookies.set("t48_access_token", access_token, {
-        expires: accessExpiresDays,
-        sameSite: "lax",
-        path: "/",
-      })
-      Cookies.set("t48_refresh_token", refresh_token, {
-        expires: 30,
-        sameSite: "lax",
-        path: "/",
-      })
-      // Reload halaman dengan token baru
-      window.location.reload()
-    } else {
-      clearAuthAndRedirect(router)
-    }
-  } catch {
-    clearAuthAndRedirect(router)
-  }
-}
-
-function clearAuthAndRedirect(router: ReturnType<typeof useRouter>) {
-  Cookies.remove("t48_access_token", { path: "/" })
-  Cookies.remove("t48_refresh_token", { path: "/" })
-  Cookies.remove("t48_user", { path: "/" })
-  router.replace("/login")
-}
-
-// ── Sub-component ────────────────────────────────────────────────────────────
 
 function StatCard({
   label,
@@ -263,7 +146,9 @@ function StatCard({
       <p className="text-xs text-muted-foreground uppercase tracking-wide">
         {label}
       </p>
-      <p className={`mt-1 text-xl font-semibold ${capitalize ? "capitalize" : ""}`}>
+      <p
+        className={`mt-1 text-xl font-semibold ${capitalize ? "capitalize" : ""}`}
+      >
         {value}
       </p>
       <p className="text-xs text-muted-foreground mt-1">{sub}</p>

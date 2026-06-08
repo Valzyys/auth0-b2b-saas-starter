@@ -2,13 +2,6 @@
 
 import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
-import {
-  getAccessToken,
-  getCachedUser,
-  clearAuth,
-  fetchWithAuth,
-  saveTokens,
-} from "@/lib/auth"
 
 const API_BASE = "https://v5.jkt48connect.com/api/team48"
 const API_KEY = "JKTCONNECT"
@@ -29,50 +22,75 @@ export type User = {
   membership_active?: boolean
 }
 
+// Helper baca cookie native
+function getCookie(name: string): string | null {
+  if (typeof document === "undefined") return null
+  const match = document.cookie
+    .split("; ")
+    .find((row) => row.startsWith(`${name}=`))
+  if (!match) return null
+  try {
+    return decodeURIComponent(match.split("=").slice(1).join("="))
+  } catch {
+    return match.split("=").slice(1).join("=")
+  }
+}
+
+function setCookie(name: string, value: string, days: number) {
+  const expires = new Date()
+  expires.setDate(expires.getDate() + days)
+  document.cookie = `${name}=${encodeURIComponent(value)}; expires=${expires.toUTCString()}; path=/; SameSite=Lax`
+}
+
+function removeCookie(name: string) {
+  document.cookie = `${name}=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;`
+}
+
 export function useAuth() {
   const router = useRouter()
   const [user, setUser] = useState<User | null>(null)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    const token = getAccessToken()
-    const cached = getCachedUser()
+    const token = getCookie("t48_access_token")
+    const raw = getCookie("t48_user")
 
-    if (!token || !cached) {
-      clearAuth()
+    if (!token || !raw) {
+      setLoading(false)
       router.replace("/login")
       return
     }
 
-    // Set dari cache dulu agar UI langsung tampil
-    setUser(cached)
+    let parsed: User
+    try {
+      parsed = JSON.parse(raw) as User
+    } catch {
+      setLoading(false)
+      router.replace("/login")
+      return
+    }
+
+    // Tampilkan dari cache dulu
+    setUser(parsed)
     setLoading(false)
 
-    // Fetch fresh di background
-    fetchWithAuth(`${API_BASE}/profile/me?apikey=${API_KEY}`)
+    // Refresh profile di background
+    fetch(`${API_BASE}/profile/me?apikey=${API_KEY}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
       .then((r) => r.json())
       .then((data) => {
         if (data.status) {
           setUser(data.data)
-          // Update cookie user
-          const currentToken = getAccessToken()!
-          const raw = document.cookie
-            .split("; ")
-            .find((c) => c.startsWith("t48_refresh_token="))
-            ?.split("=")[1] ?? ""
-          saveTokens(currentToken, raw, data.data)
-        } else {
-          clearAuth()
-          router.replace("/login")
+          setCookie("t48_user", JSON.stringify(data.data), 30)
         }
+        // Gagal fetch = biarkan pakai cache, jangan redirect
       })
-      .catch(() => {
-        // Gagal fetch tapi sudah ada cache — biarkan, tidak redirect
-      })
+      .catch(() => {})
   }, [router])
 
   function logout() {
-    const token = getAccessToken()
+    const token = getCookie("t48_access_token")
     if (token) {
       fetch(`${API_BASE}/auth/logout?apikey=${API_KEY}`, {
         method: "POST",
@@ -82,7 +100,9 @@ export function useAuth() {
         },
       }).catch(() => {})
     }
-    clearAuth()
+    removeCookie("t48_access_token")
+    removeCookie("t48_refresh_token")
+    removeCookie("t48_user")
     router.replace("/login")
   }
 

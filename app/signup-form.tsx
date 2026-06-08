@@ -1,64 +1,196 @@
-import Link from "next/link"
-import { redirect } from "next/navigation"
+"use client"
 
+import Link from "next/link"
+import { useState } from "react"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { SubmitButton } from "@/components/submit-button"
 
+const API_BASE = "https://v5.jkt48connect.com/api/team48"
+const API_KEY = "JKTCONNECT"
+
 export function SignUpForm() {
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [success, setSuccess] = useState<string | null>(null)
+  const [formData, setFormData] = useState({
+    username: "",
+    email: "",
+    password: "",
+    full_name: "",
+    whatsapp: "",
+    referred_by: "",
+  })
+
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setFormData((prev) => ({ ...prev, [e.target.name]: e.target.value }))
+    setError(null)
+    setSuccess(null)
+  }
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setLoading(true)
+    setError(null)
+    setSuccess(null)
+
+    try {
+      const res = await fetch(`${API_BASE}/auth/register?apikey=${API_KEY}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          username: formData.username,
+          email: formData.email,
+          password: formData.password,
+          full_name: formData.full_name || undefined,
+          whatsapp: formData.whatsapp || undefined,
+          referred_by: formData.referred_by || undefined,
+        }),
+      })
+
+      const data = await res.json()
+
+      if (!data.status) {
+        setError(data.message || "Registrasi gagal")
+        return
+      }
+
+      setSuccess(data.message || "Registrasi berhasil!")
+      setFormData({ username: "", email: "", password: "", full_name: "", whatsapp: "", referred_by: "" })
+    } catch {
+      setError("Terjadi kesalahan. Coba lagi.")
+    } finally {
+      setLoading(false)
+    }
+  }
+
   return (
     <div className="mx-auto flex w-full flex-col justify-center space-y-6 sm:w-[350px]">
       <div className="flex flex-col space-y-2 text-center">
         <h1 className="text-2xl font-semibold tracking-tight">
-          Try SaaStart for Free
+          Daftar ke JKT48Connect
         </h1>
         <p className="text-sm text-muted-foreground">
-          Enter your email address to sign up and create a new organization for you and your collaborators.
+          Buat akun untuk menikmati layanan live streaming, tiket, dan membership JKT48.
         </p>
       </div>
-      <form
-        action={async (formData: FormData) => {
-          "use server"
 
-          const email = formData.get("email")
-          if (!email || typeof email !== "string") return
-
-          const searchParams = new URLSearchParams({
-            login_hint: email,
-            returnTo: '/onboarding/verify'
-          })
-
-          redirect(`/onboarding/signup?${searchParams.toString()}`)
-        }}
-      >
+      <form onSubmit={handleSubmit}>
         <div className="grid gap-4">
+          <div className="grid gap-2">
+            <Label htmlFor="username">Username</Label>
+            <Input
+              id="username"
+              name="username"
+              type="text"
+              placeholder="jkt48fan"
+              value={formData.username}
+              onChange={handleChange}
+              required
+              minLength={3}
+              maxLength={20}
+              pattern="[a-zA-Z0-9_]+"
+            />
+          </div>
+
           <div className="grid gap-2">
             <Label htmlFor="email">Email</Label>
             <Input
               id="email"
-              type="email"
               name="email"
+              type="email"
               placeholder="name@example.com"
+              value={formData.email}
+              onChange={handleChange}
               required
             />
           </div>
-          <SubmitButton>Get Started</SubmitButton>
+
+          <div className="grid gap-2">
+            <Label htmlFor="password">Password</Label>
+            <Input
+              id="password"
+              name="password"
+              type="password"
+              placeholder="Minimal 8 karakter"
+              value={formData.password}
+              onChange={handleChange}
+              required
+              minLength={8}
+            />
+          </div>
+
+          <div className="grid gap-2">
+            <Label htmlFor="full_name">
+              Nama Lengkap <span className="text-muted-foreground">(opsional)</span>
+            </Label>
+            <Input
+              id="full_name"
+              name="full_name"
+              type="text"
+              placeholder="Nama kamu"
+              value={formData.full_name}
+              onChange={handleChange}
+            />
+          </div>
+
+          <div className="grid gap-2">
+            <Label htmlFor="whatsapp">
+              WhatsApp <span className="text-muted-foreground">(opsional)</span>
+            </Label>
+            <Input
+              id="whatsapp"
+              name="whatsapp"
+              type="tel"
+              placeholder="08xxxxxxxxxx"
+              value={formData.whatsapp}
+              onChange={handleChange}
+            />
+          </div>
+
+          <div className="grid gap-2">
+            <Label htmlFor="referred_by">
+              Kode Referral <span className="text-muted-foreground">(opsional)</span>
+            </Label>
+            <Input
+              id="referred_by"
+              name="referred_by"
+              type="text"
+              placeholder="T48XXXXX"
+              value={formData.referred_by}
+              onChange={handleChange}
+            />
+          </div>
+
+          {error && (
+            <p className="text-sm text-destructive text-center">{error}</p>
+          )}
+
+          {success && (
+            <p className="text-sm text-green-600 text-center">{success}</p>
+          )}
+
+          <SubmitButton disabled={loading}>
+            {loading ? "Mendaftar..." : "Daftar Sekarang"}
+          </SubmitButton>
         </div>
       </form>
+
       <p className="px-8 text-center text-sm text-muted-foreground">
-        By continuing, you agree to our{" "}
-        <Link
-          href="/terms"
-          className="underline underline-offset-4 hover:text-primary"
-        >
-          Terms of Service
+        Sudah punya akun?{" "}
+        <Link href="/login" className="underline underline-offset-4 hover:text-primary">
+          Masuk
+        </Link>
+      </p>
+
+      <p className="px-8 text-center text-sm text-muted-foreground">
+        Dengan mendaftar, kamu menyetujui{" "}
+        <Link href="/terms" className="underline underline-offset-4 hover:text-primary">
+          Syarat & Ketentuan
         </Link>{" "}
-        and{" "}
-        <Link
-          href="/privacy"
-          className="underline underline-offset-4 hover:text-primary"
-        >
-          Privacy Policy
+        dan{" "}
+        <Link href="/privacy" className="underline underline-offset-4 hover:text-primary">
+          Kebijakan Privasi
         </Link>
         .
       </p>

@@ -1,31 +1,20 @@
-import React from "react"
-import { cookies } from "next/headers"
-import { redirect } from "next/navigation"
+"use client"
+
+import { useAuth } from "@/hooks/useAuth"
 import { PageHeader } from "@/components/page-header"
 import { DeleteAccountForm } from "./delete-account-form"
 import { DisplayNameForm } from "./display-name-form"
 
-const API_BASE = "https://v5.jkt48connect.com/api/team48"
-const API_KEY = "JKTCONNECT"
+export default function Profile() {
+  const { user, loading } = useAuth()
 
-async function getProfile(accessToken: string) {
-  const res = await fetch(`${API_BASE}/profile/me?apikey=${API_KEY}`, {
-    headers: { Authorization: `Bearer ${accessToken}` },
-    cache: "no-store",
-  })
-  if (!res.ok) return null
-  const data = await res.json()
-  return data.status ? data.data : null
-}
-
-export default async function Profile() {
-  const cookieStore = await cookies()
-  const accessToken = cookieStore.get("t48_access_token")?.value
-
-  if (!accessToken) redirect("/auth/login")
-
-  const profile = await getProfile(accessToken)
-  if (!profile) redirect("/auth/login")
+  if (loading || !user) {
+    return (
+      <div className="flex flex-1 items-center justify-center">
+        <p className="text-muted-foreground text-sm">Memuat profil...</p>
+      </div>
+    )
+  }
 
   return (
     <div className="space-y-2">
@@ -33,7 +22,7 @@ export default async function Profile() {
         title="Profile"
         description="Manage your personal information."
       />
-      <DisplayNameForm displayName={profile.full_name ?? profile.username ?? ""} />
+      <DisplayNameForm displayName={user.full_name ?? user.username ?? ""} />
       <DeleteAccountForm />
     </div>
   )

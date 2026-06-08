@@ -2,6 +2,7 @@
 
 import { useState } from "react"
 import Link from "next/link"
+import Cookies from "js-cookie"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { SubmitButton } from "@/components/submit-button"
@@ -40,17 +41,14 @@ export function LoginForm() {
       const data = await res.json()
 
       if (!data.status) {
-        // Handle ban
         if (data.is_banned) {
           setError(data.message || "Akun kamu dibanned.")
           return
         }
-        // Handle locked
         if (res.status === 429) {
           setError(data.message || "Akun terkunci sementara. Coba lagi nanti.")
           return
         }
-        // Sisa attempts info
         if (data.attempts_remaining !== undefined) {
           setError(
             `${data.message} (${data.attempts_remaining} percobaan tersisa)`
@@ -61,16 +59,38 @@ export function LoginForm() {
         return
       }
 
-      // Simpan tokens ke localStorage
-      const { access_token, refresh_token } = data.data.tokens
-      localStorage.setItem("t48_access_token", access_token)
-      localStorage.setItem("t48_refresh_token", refresh_token)
-      localStorage.setItem("t48_user", JSON.stringify(data.data.user))
+      const { access_token, refresh_token, expires_in } = data.data.tokens
+      const user = data.data.user
 
-      // Redirect ke dashboard
+      // Simpan ke cookie agar bisa dibaca server components
+      // access_token: sesuai TTL dari API (default 15 menit)
+      const accessExpiresDays = (expires_in ?? 900) / 86400
+      Cookies.set("t48_access_token", access_token, {
+        expires: accessExpiresDays,
+        sameSite: "lax",
+        path: "/",
+      })
+      // refresh_token: 30 hari
+      Cookies.set("t48_refresh_token", refresh_token, {
+        expires: 30,
+        sameSite: "lax",
+        path: "/",
+      })
+      // user info (non-sensitif, untuk client-side display)
+      Cookies.set("t48_user", JSON.stringify(user), {
+        expires: 30,
+        sameSite: "lax",
+        path: "/",
+      })
+
+      // Bersihkan localStorage lama jika ada
+      localStorage.removeItem("t48_access_token")
+      localStorage.removeItem("t48_refresh_token")
+      localStorage.removeItem("t48_user")
+
       window.location.href = "/dashboard"
     } catch {
-      setError("Terjadi kesalahan. Coba lagi.")
+      setError("Terjadi kesalahan jaringan. Coba lagi.")
     } finally {
       setLoading(false)
     }
@@ -127,7 +147,9 @@ export function LoginForm() {
             </div>
 
             {error && (
-              <p className="text-sm text-destructive text-center">{error}</p>
+              <p className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive text-center">
+                {error}
+              </p>
             )}
 
             <SubmitButton disabled={loading} className="mt-1">
@@ -139,7 +161,7 @@ export function LoginForm() {
         <p className="mt-4 text-center text-sm text-muted-foreground">
           Belum punya akun?{" "}
           <Link
-            href="/"
+            href="/register"
             className="underline underline-offset-4 hover:text-primary"
           >
             Daftar sekarang

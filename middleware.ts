@@ -1,23 +1,31 @@
+import { NextResponse } from "next/server"
 import type { NextRequest } from "next/server"
 
-import { appClient, onboardingClient } from "./lib/auth0"
+const PROTECTED_ROUTES = ["/dashboard"]
+const AUTH_ROUTES = ["/login", "/register"]
 
-export async function middleware(request: NextRequest) {
-  if (request.url.includes("/onboarding")) {
-    return await onboardingClient.middleware(request)
-  } else {
-    return await appClient.middleware(request)
+export function middleware(request: NextRequest) {
+  const { pathname } = request.nextUrl
+  const accessToken = request.cookies.get("t48_access_token")?.value
+  const isProtected = PROTECTED_ROUTES.some((r) => pathname.startsWith(r))
+  const isAuthRoute = AUTH_ROUTES.some((r) => pathname.startsWith(r))
+
+  if (isProtected && !accessToken) {
+    const url = request.nextUrl.clone()
+    url.pathname = "/login"
+    url.searchParams.set("from", pathname)
+    return NextResponse.redirect(url)
   }
+
+  if (isAuthRoute && accessToken) {
+    const url = request.nextUrl.clone()
+    url.pathname = "/dashboard"
+    return NextResponse.redirect(url)
+  }
+
+  return NextResponse.next()
 }
 
 export const config = {
-  matcher: [
-    /*
-     * Match all request paths except for the ones starting with:
-     * - _next/static (static files)
-     * - _next/image (image optimization files)
-     * - favicon.ico, sitemap.xml, robots.txt (metadata files)
-     */
-    "/((?!_next/static|_next/image|favicon.ico|sitemap.xml|robots.txt|icon.png).*)",
-  ],
+  matcher: ["/dashboard/:path*", "/login", "/register"],
 }

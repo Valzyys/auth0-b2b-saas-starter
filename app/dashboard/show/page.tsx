@@ -178,10 +178,10 @@ function ShowCard({ show }: { show: Show }) {
   const price = show.idnliveplus?.liveroom_price
 
   return (
-    <div className="group relative flex flex-col rounded-xl border border-border bg-background overflow-hidden transition-shadow hover:shadow-md">
+    <div className="group flex flex-col rounded-xl border border-border bg-background overflow-hidden transition-shadow hover:shadow-md">
 
       {/* Thumbnail */}
-      <div className="relative h-48 bg-muted overflow-hidden">
+      <div className="relative h-48 overflow-hidden bg-muted shrink-0">
         {!imgError ? (
           <img
             src={show.image_url}
@@ -190,47 +190,39 @@ function ShowCard({ show }: { show: Show }) {
             onError={() => setImgError(true)}
           />
         ) : (
-          <div className="flex h-full items-center justify-center bg-muted">
+          <div className="flex h-full items-center justify-center">
             <svg className="h-10 w-10 text-muted-foreground/30" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 10l4.553-2.069A1 1 0 0121 8.82v6.362a1 1 0 01-1.447.894L15 14M3 8a2 2 0 012-2h10a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V8z" />
             </svg>
           </div>
         )}
 
-        {/* Status badge overlay */}
+        {/* Status badge */}
         <div className="absolute top-2.5 left-2.5">
           <StatusBadge status={show.status} />
         </div>
 
         {/* Price badge */}
         {price != null && (
-          <div className="absolute top-2.5 right-2.5 rounded-full bg-black/60 px-2.5 py-0.5 text-xs font-medium text-white backdrop-blur-sm">
+          <div className="absolute top-2.5 right-2.5 rounded-full bg-black/70 px-2.5 py-0.5 text-xs font-medium text-white">
             {price} gold
           </div>
         )}
       </div>
 
-      {/* Content */}
-      <div className="flex flex-1 flex-col p-4 space-y-3">
+      {/* Content — solid background, no bleed from image */}
+      <div className="flex flex-1 flex-col gap-2.5 p-4 bg-background">
 
         {/* Title */}
-        <h3 className="font-semibold text-sm leading-snug line-clamp-2">{show.title}</h3>
+        <h3 className="font-semibold text-sm leading-snug line-clamp-2 text-foreground">
+          {show.title}
+        </h3>
 
-        {/* Show ID + type */}
-        <div className="flex items-center gap-2 flex-wrap">
-          <span className="rounded bg-muted px-2 py-0.5 text-xs font-mono text-muted-foreground">
-            {show.showId}
-          </span>
-          <span className="text-xs text-muted-foreground capitalize">
-            {show.live_type === "idnliveplus" ? "IDN Live Plus" : show.live_type}
-          </span>
-        </div>
-
-        {/* Schedule info */}
-        <div className="space-y-1.5">
+        {/* Schedule */}
+        <div className="space-y-1">
           {show.scheduled_at > 0 && (
-            <div className="flex items-start gap-2 text-xs text-muted-foreground">
-              <svg className="mt-0.5 h-3.5 w-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              <svg className="h-3.5 w-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
               </svg>
               <span>{formatDate(show.scheduled_at)}</span>
@@ -247,7 +239,7 @@ function ShowCard({ show }: { show: Show }) {
           {show.live_at > 0 && show.status === "live" && (
             <div className="flex items-center gap-2 text-xs text-red-600 dark:text-red-400">
               <span className="h-2 w-2 rounded-full bg-red-500 animate-pulse" />
-              <span>Mulai {formatTime(show.live_at)}</span>
+              <span>Live sejak {formatTime(show.live_at)}</span>
             </div>
           )}
         </div>
@@ -257,16 +249,6 @@ function ShowCard({ show }: { show: Show }) {
           <p className="text-xs text-muted-foreground leading-relaxed line-clamp-3 whitespace-pre-line">
             {desc.trim()}
           </p>
-        )}
-
-        {/* EXP info */}
-        {show.idnliveplus?.exp != null && (
-          <div className="mt-auto pt-2 flex items-center gap-1.5 text-xs text-muted-foreground border-t border-border">
-            <svg className="h-3.5 w-3.5 text-amber-500" fill="currentColor" viewBox="0 0 20 20">
-              <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
-            </svg>
-            <span>{show.idnliveplus.exp.toLocaleString("id-ID")} EXP</span>
-          </div>
         )}
       </div>
     </div>

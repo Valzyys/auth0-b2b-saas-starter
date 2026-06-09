@@ -149,14 +149,23 @@ function QrisModal({
         if (data.data?.qr_image) setQrImage(data.data.qr_image)
         if (data.data?.qris_content) setQrisContent(data.data.qris_content)
 
-        // Always sync expiredAt from server's time_remaining — this is the source of truth
-        if (data.data?.time_remaining?.seconds !== undefined) {
-          const newExpiredAt = new Date(Date.now() + data.data.time_remaining.seconds * 1000).toISOString()
-          setExpiredAt(newExpiredAt)
+        // Sync expiredAt from server's time_remaining, but only if it gives a
+        // meaningful value (>5s) so a stale/zero response never wipes a valid countdown.
+        const serverSecs: number | undefined = data.data?.time_remaining?.seconds
+        if (serverSecs !== undefined && serverSecs > 5) {
+          const newExpiredAt = new Date(Date.now() + serverSecs * 1000).toISOString()
+          setExpiredAt(prev => {
+            if (!prev) return newExpiredAt
+            const prevMs = new Date(prev).getTime()
+            const newMs  = new Date(newExpiredAt).getTime()
+            return newMs > prevMs ? newExpiredAt : prev
+          })
+          setPollReady(true)
+        } else if (serverSecs === undefined) {
+          // No time_remaining in response — mark ready but don't touch deadline
+          setPollReady(true)
         }
-
-        // Mark first poll done so countdown is now active
-        setPollReady(true)
+        // serverSecs <= 5 → don't touch state; let order_status "expired" drive the transition
 
         if (st === "paid") {
           stopPoll()

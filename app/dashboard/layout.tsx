@@ -22,7 +22,7 @@ import { useAuth } from "@/hooks/useAuth"
 const NAV_ITEMS = [
   { href: "/dashboard",  label: "Home",       icon: LayoutDashboard },
   { href: "/show",       label: "Jadwal",     icon: CalendarDays },
-  { href: "/membership", label: "Membership", icon: CreditCard },
+  { href: "/dashboard/membership", label: "Membership", icon: CreditCard },
   { href: "/live",       label: "Live",       icon: Radio },
 ]
 

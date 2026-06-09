@@ -21,7 +21,7 @@ import { useAuth } from "@/hooks/useAuth"
 
 const NAV_ITEMS = [
   { href: "/dashboard",  label: "Home",       icon: LayoutDashboard },
-  { href: "/show",       label: "Jadwal",     icon: CalendarDays },
+  { href: "/dashboard/show",       label: "Jadwal",     icon: CalendarDays },
   { href: "/dashboard/membership", label: "Membership", icon: CreditCard },
   { href: "/live",       label: "Live",       icon: Radio },
 ]
@@ -262,7 +262,7 @@ export default function DashboardLayout({
             <Link href="/" className="font-mono font-semibold hover:text-foreground transition-colors">
               T48ID Official
             </Link>
-            <span>&copy; {new Date().getFullYear()} T48ID. All rights reserved.</span>
+            <span>&copy; {new Date().getFullYear()} T48ID | GISTREAM . All rights reserved.</span>
           </div>
         </footer>
       </div>

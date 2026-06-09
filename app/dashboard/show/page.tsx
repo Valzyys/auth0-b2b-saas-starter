@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
-
+//v
 const API_URL = "https://v5.jkt48connect.com/api/jkt48/idnplus?apikey=JKTCONNECT"
 
 interface IdnLivePlus {

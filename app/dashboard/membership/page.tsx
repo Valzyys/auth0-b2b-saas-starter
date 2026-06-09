@@ -120,7 +120,10 @@ function QrisModal({
   const [cancelling, setCancelling] = useState(false)
   const [qrImage, setQrImage] = useState<string | null>(payment.qr_image)
   const [qrisContent, setQrisContent] = useState<string | null>(payment.qris_content)
-  const [expiredAt, setExpiredAt] = useState(payment.expired_at)
+  // Start with null so countdown doesn't fire until first poll confirms time_remaining
+  const [expiredAt, setExpiredAt] = useState<string | null>(null)
+  // Track whether first poll has completed
+  const [pollReady, setPollReady] = useState(false)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const secsLeft = useCountdown(expiredAt)
 
@@ -145,10 +148,15 @@ function QrisModal({
 
         if (data.data?.qr_image) setQrImage(data.data.qr_image)
         if (data.data?.qris_content) setQrisContent(data.data.qris_content)
+
+        // Always sync expiredAt from server's time_remaining — this is the source of truth
         if (data.data?.time_remaining?.seconds !== undefined) {
           const newExpiredAt = new Date(Date.now() + data.data.time_remaining.seconds * 1000).toISOString()
           setExpiredAt(newExpiredAt)
         }
+
+        // Mark first poll done so countdown is now active
+        setPollReady(true)
 
         if (st === "paid") {
           stopPoll()
@@ -171,12 +179,13 @@ function QrisModal({
     return stopPoll
   }, [payment.ref_id, pollStatus, stopPoll, onSuccess])
 
+  // Only let countdown trigger expired AFTER first poll confirms time_remaining
   useEffect(() => {
-    if (secsLeft === 0 && pollStatus === "pending") {
+    if (secsLeft === 0 && pollStatus === "pending" && pollReady) {
       stopPoll()
       setPollStatus("expired")
     }
-  }, [secsLeft, pollStatus, stopPoll])
+  }, [secsLeft, pollStatus, pollReady, stopPoll])
 
   const handleCancel = async () => {
     setCancelling(true)
@@ -289,14 +298,18 @@ function QrisModal({
 
               {/* Countdown */}
               <div className={`flex items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm font-medium ${
-                secsLeft < 120
+                !pollReady
+                  ? "bg-muted text-muted-foreground"
+                  : secsLeft < 120
                   ? "bg-red-50 text-red-600 dark:bg-red-900/20 dark:text-red-400"
                   : "bg-yellow-50 text-yellow-700 dark:bg-yellow-900/20 dark:text-yellow-400"
               }`}>
                 <svg className="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
                 </svg>
-                Berakhir dalam {mins}m {String(secs).padStart(2, "0")}s
+                {!pollReady
+                  ? "Memuat waktu..."
+                  : `Berakhir dalam ${mins}m ${String(secs).padStart(2, "0")}s`}
               </div>
 
               {/* QR Image */}

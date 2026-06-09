@@ -92,7 +92,7 @@ export function LoginForm() {
       <div className="w-full max-w-sm px-4">
         <div className="mb-6 flex flex-col space-y-2 text-center">
           <h1 className="text-2xl font-semibold tracking-tight">
-            Masuk ke JKT48Connect
+            Masuk ke T48ID
           </h1>
           <p className="text-sm text-muted-foreground">
             Masukkan username, email, atau ID akun dan password kamu.

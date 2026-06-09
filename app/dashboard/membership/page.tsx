@@ -107,21 +107,15 @@ function useCountdown(targetDate: string | null) {
 
 // ─── QRIS Payment Modal ───────────────────────────────────────
 
-function QrisModal({
-  payment,
-  onClose,
-  onSuccess,
-}: {
-  payment: ActivePayment
-  onClose: () => void
-  onSuccess: (membershipExpiredAt: string | null) => void
-}) {
+function QrisModal({ payment, onClose, onSuccess }) {
   const [pollStatus, setPollStatus] = useState<"pending" | "paid" | "expired" | "cancelled">("pending")
   const [cancelling, setCancelling] = useState(false)
-  const [qrImage, setQrImage]       = useState(payment.qr_image)
+  const [qrImage, setQrImage] = useState(payment.qr_image)
   const [qrisContent, setQrisContent] = useState(payment.qris_content)
-  const pollRef  = useRef<ReturnType<typeof setInterval> | null>(null)
-  const secsLeft = useCountdown(payment.expired_at)
+  const [expiredAt, setExpiredAt] = useState(payment.expired_at) // ← TAMBAH INI
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const secsLeft = useCountdown(expiredAt) // ← PAKAI expiredAt STATE, bukan payment.expired_at
+
 
   const mins = Math.floor(secsLeft / 60)
   const secs = secsLeft % 60
@@ -135,33 +129,38 @@ function QrisModal({
     if (pollStatus !== "pending") return
 
     const poll = async () => {
-      try {
-        const res  = await fetch(`${API_BASE}/qris/check/${payment.ref_id}?apikey=${API_KEY}`)
-        const data = await res.json()
+    try {
+      const res = await fetch(`${API_BASE}/qris/check/${payment.ref_id}?apikey=${API_KEY}`)
+      const data = await res.json()
 
-        if (!data.status) return
+      if (!data.status) return
 
-        const st = data.order_status as string
+      const st = data.order_status as string
 
-        // Update qr_image jika ada dari response (fresh dari R2)
-        if (data.data?.qr_image)      setQrImage(data.data.qr_image)
-        if (data.data?.qris_content)  setQrisContent(data.data.qris_content)
+      if (data.data?.qr_image) setQrImage(data.data.qr_image)
+      if (data.data?.qris_content) setQrisContent(data.data.qris_content)
+      // ← TAMBAH: update expired_at dari server jika ada
+      if (data.data?.time_remaining?.seconds !== undefined) {
+        // Hitung ulang expired_at berdasarkan seconds dari server
+        const newExpiredAt = new Date(Date.now() + data.data.time_remaining.seconds * 1000).toISOString()
+        setExpiredAt(newExpiredAt)
+      }
 
-        if (st === "paid") {
-          stopPoll()
-          setPollStatus("paid")
-          toast.success("🎉 Pembayaran terkonfirmasi! Membership aktif.")
-          setTimeout(() => onSuccess(data.data?.membership_expired_at ?? null), 1500)
-        } else if (st === "expired") {
-          stopPoll()
-          setPollStatus("expired")
-          toast.error("QRIS expired. Silakan buat order baru.")
-        } else if (st === "cancelled") {
-          stopPoll()
-          setPollStatus("cancelled")
-        }
-      } catch (_) {}
-    }
+      if (st === "paid") {
+        stopPoll()
+        setPollStatus("paid")
+        toast.success("🎉 Pembayaran terkonfirmasi! Membership aktif.")
+        setTimeout(() => onSuccess(data.data?.membership_expired_at ?? null), 1500)
+      } else if (st === "expired") {
+        stopPoll()
+        setPollStatus("expired")
+        toast.error("QRIS expired. Silakan buat order baru.")
+      } else if (st === "cancelled") {
+        stopPoll()
+        setPollStatus("cancelled")
+      }
+    } catch (_) {}
+  }
 
     poll() // langsung poll sekali
     pollRef.current = setInterval(poll, POLL_INTERVAL_MS)

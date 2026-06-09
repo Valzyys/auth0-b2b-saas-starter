@@ -535,7 +535,7 @@ function ShowCard({
               </div>
               {show.status === "live" && (
                 <a
-                  href={`/dashboard/live/${show.live_token_id}`}
+                  href={`/live/${show.live_token_id}`}
                   className="flex w-full items-center justify-center gap-2 rounded-md bg-red-600 py-2 text-sm font-medium text-white hover:bg-red-700 transition-colors"
                 >
                   <span className="h-1.5 w-1.5 rounded-full bg-white animate-pulse" />
@@ -665,7 +665,7 @@ function OrderRow({
             🎟️ Ticket aktif
           </p>
           <a
-            href={`/dashboard/live/${order.live_token_id}`}
+            href={`/live/${order.live_token_id}`}
             className="ml-3 shrink-0 rounded-md bg-green-600 px-3 py-1 text-xs font-medium text-white hover:bg-green-700 transition-colors"
           >
             Tonton

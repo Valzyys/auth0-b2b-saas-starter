@@ -34,6 +34,7 @@ interface Show {
   idn_gold_price:      number | null
   description:         string | null
   ticket:              TicketInfo
+  live_token_id?:      string | null // <-- Tambahkan baris ini
 }
 
 interface ActivePayment {

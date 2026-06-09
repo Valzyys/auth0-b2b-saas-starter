@@ -122,9 +122,8 @@ function QrisModal({
   const [qrisContent, setQrisContent] = useState<string | null>(payment.qris_content)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
-  // Countdown: always 1 hour from when the modal was opened (matches QRIS timeout)
-  const deadlineRef = useRef<string>(new Date(Date.now() + 60 * 60 * 1000).toISOString())
-  const secsLeft = useCountdown(deadlineRef.current)
+  // Countdown driven purely by time_remaining.seconds from /qris/check
+  const [secsLeft, setSecsLeft] = useState<number>(60 * 60) // fallback 1h until first poll
 
   const mins = Math.floor(secsLeft / 60)
   const secs = secsLeft % 60
@@ -150,6 +149,11 @@ function QrisModal({
         if (orderDetail?.qr_image) setQrImage(orderDetail.qr_image)
         if (orderDetail?.qris_content) setQrisContent(orderDetail.qris_content)
 
+        // Sync countdown from server's time_remaining
+        if (typeof orderDetail?.time_remaining?.seconds === "number") {
+          setSecsLeft(orderDetail.time_remaining.seconds)
+        }
+
         if (st === "paid") {
           stopPoll()
           setPollStatus("paid")
@@ -171,7 +175,19 @@ function QrisModal({
     return stopPoll
   }, [payment.ref_id, pollStatus, stopPoll, onSuccess])
 
-  // Countdown hits zero → mark as expired
+  // Tick countdown locally between polls
+  useEffect(() => {
+    if (pollStatus !== "pending" || secsLeft <= 0) return
+    const t = setInterval(() => {
+      setSecsLeft(prev => {
+        if (prev <= 1) { clearInterval(t); return 0 }
+        return prev - 1
+      })
+    }, 1000)
+    return () => clearInterval(t)
+  }, [pollStatus]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Countdown hits zero → expired
   useEffect(() => {
     if (secsLeft === 0 && pollStatus === "pending") {
       stopPoll()

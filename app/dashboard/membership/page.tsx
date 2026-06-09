@@ -62,11 +62,7 @@ interface ActivePayment {
   timeout_minutes: number
 }
 
-interface PaymentData {
-  qr_image: string;
-  qris_content: string;
-  expired_at: string;
-}
+
 
 // ─── Helpers ──────────────────────────────────────────────────
 
@@ -116,11 +112,11 @@ function useCountdown(targetDate: string | null) {
 
 
 // 2. Tambahkan type annotation pada parameter fungsi
-function QrisModal({ payment, onClose, onSuccess }: { payment: PaymentData; onClose: () => void; onSuccess: () => void }) {
+function QrisModal({ payment, onClose, onSuccess }: { payment: ActivePayment; onClose: () => void; onSuccess: () => void })
   const [pollStatus, setPollStatus] = useState<"pending" | "paid" | "expired" | "cancelled">("pending")
   const [cancelling, setCancelling] = useState(false)
-  const [qrImage, setQrImage] = useState(payment.qr_image)
-  const [qrisContent, setQrisContent] = useState(payment.qris_content)
+  const [qrImage, setQrImage] = useState<string | null>(payment.qr_image)
+  const [qrisContent, setQrisContent] = useState<string | null>(payment.qris_content)
   const [expiredAt, setExpiredAt] = useState(payment.expired_at) // ← TAMBAH INI
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const secsLeft = useCountdown(expiredAt) // ← PAKAI expiredAt STATE, bukan payment.expired_at

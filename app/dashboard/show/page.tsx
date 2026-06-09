@@ -534,7 +534,7 @@ function ShowCard({
               </div>
               {show.status === "live" && (
                 <a
-                  href={`/dashboard/live/${show.show_id}`}
+                  href={`/dashboard/live/${show.live_token_id}`}
                   className="flex w-full items-center justify-center gap-2 rounded-md bg-red-600 py-2 text-sm font-medium text-white hover:bg-red-700 transition-colors"
                 >
                   <span className="h-1.5 w-1.5 rounded-full bg-white animate-pulse" />

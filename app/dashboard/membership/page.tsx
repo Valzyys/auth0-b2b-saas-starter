@@ -144,34 +144,46 @@ function QrisModal({
 
         if (!data.status) return
 
-        const st = data.order_status as string
+        // /qris/check returns order_status at root level, order detail inside data[0]
+        const st = (data.order_status ?? data.data?.[0]?.order_status ?? "") as string
+        const orderDetail = Array.isArray(data.data) ? data.data[0] : data.data
 
-        if (data.data?.qr_image) setQrImage(data.data.qr_image)
-        if (data.data?.qris_content) setQrisContent(data.data.qris_content)
+        if (orderDetail?.qr_image) setQrImage(orderDetail.qr_image)
+        if (orderDetail?.qris_content) setQrisContent(orderDetail.qris_content)
 
-        // Sync expiredAt from server's time_remaining, but only if it gives a
-        // meaningful value (>5s) so a stale/zero response never wipes a valid countdown.
-        const serverSecs: number | undefined = data.data?.time_remaining?.seconds
+        // /qris/check has no time_remaining — use expired_at from the order detail instead.
+        // /qris/check (polling) uses expired_at; /qris/buy uses time_remaining.
+        const serverSecs: number | undefined = orderDetail?.time_remaining?.seconds
+        const expiredAtFromServer: string | undefined = orderDetail?.expired_at
+
         if (serverSecs !== undefined && serverSecs > 5) {
+          // buy-style response with time_remaining
           const newExpiredAt = new Date(Date.now() + serverSecs * 1000).toISOString()
           setExpiredAt(prev => {
             if (!prev) return newExpiredAt
-            const prevMs = new Date(prev).getTime()
-            const newMs  = new Date(newExpiredAt).getTime()
-            return newMs > prevMs ? newExpiredAt : prev
+            return new Date(newExpiredAt) > new Date(prev) ? newExpiredAt : prev
           })
           setPollReady(true)
-        } else if (serverSecs === undefined) {
-          // No time_remaining in response — mark ready but don't touch deadline
-          setPollReady(true)
+        } else if (expiredAtFromServer) {
+          // check-style response with expired_at timestamp
+          const msLeft = new Date(expiredAtFromServer).getTime() - Date.now()
+          if (msLeft > 5000) {
+            setExpiredAt(prev => {
+              if (!prev) return expiredAtFromServer
+              return new Date(expiredAtFromServer) > new Date(prev) ? expiredAtFromServer : prev
+            })
+            setPollReady(true)
+          } else {
+            // expired_at is in the past — let order_status drive state, not countdown
+            setPollReady(false)
+          }
         }
-        // serverSecs <= 5 → don't touch state; let order_status "expired" drive the transition
 
         if (st === "paid") {
           stopPoll()
           setPollStatus("paid")
           toast.success("🎉 Pembayaran terkonfirmasi! Membership aktif.")
-          setTimeout(() => onSuccess(data.data?.membership_expired_at ?? null), 1500)
+          setTimeout(() => onSuccess(orderDetail?.membership_expired_at ?? null), 1500)
         } else if (st === "expired") {
           stopPoll()
           setPollStatus("expired")

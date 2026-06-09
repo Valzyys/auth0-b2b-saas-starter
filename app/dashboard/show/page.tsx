@@ -178,7 +178,7 @@ function ShowCard({ show }: { show: Show }) {
   const price = show.idnliveplus?.liveroom_price
 
   return (
-    <div className="group flex flex-col rounded-xl border border-border bg-background overflow-hidden transition-shadow hover:shadow-md">
+    <div className="group flex flex-col rounded-xl border border-border bg-card overflow-hidden shadow-sm hover:shadow-md transition-shadow">
 
       {/* Thumbnail */}
       <div className="relative h-48 overflow-hidden bg-muted shrink-0">
@@ -211,7 +211,7 @@ function ShowCard({ show }: { show: Show }) {
       </div>
 
       {/* Content — solid background, no bleed from image */}
-      <div className="flex flex-1 flex-col gap-2.5 p-4 bg-background">
+      <div className="flex flex-1 flex-col gap-2.5 p-4 bg-card">
 
         {/* Title */}
         <h3 className="font-semibold text-sm leading-snug line-clamp-2 text-foreground">

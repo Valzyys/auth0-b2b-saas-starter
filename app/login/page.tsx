@@ -1,9 +1,13 @@
 import { appClient } from "@/lib/auth0"
-import { Auth0Logo } from "@/components/auth0-logo"
 import { LoginForm } from "../login-form"
 import { redirect } from "next/navigation"
+import { cookies } from "next/headers"
 
 export default async function LoginPage() {
+  const cookieStore = await cookies()
+  const accessToken = cookieStore.get("t48_access_token")
+  if (accessToken) redirect("/dashboard")
+
   const session = await appClient.getSession()
   if (session) redirect("/dashboard")
 
@@ -12,22 +16,17 @@ export default async function LoginPage() {
       <div className="relative hidden h-full flex-col bg-muted p-10 text-white dark:border-r lg:flex">
         <div className="absolute inset-0 bg-black" />
         <div className="relative z-20 flex items-center text-lg font-medium">
-          <Auth0Logo className="mr-2 size-8" />
-          <span className="font-semibold">SaaStart</span>
+          <span className="font-semibold">T48ID</span>
         </div>
         <div className="relative z-20 m-auto max-w-sm text-center">
-          <blockquote className="space-y-2">
-            <div className="space-y-8">
-              <p className="text-lg font-medium">
-                SaaStart adalah referensi aplikasi B2B SaaS yang dibangun
-                menggunakan Next.js dan Auth0 by Okta.
-              </p>
-              <p className="text-lg">
-                Mendukung multi-tenancy, manajemen pengguna, kontrol akses,
-                kebijakan keamanan, dan konfigurasi SSO mandiri.
-              </p>
-            </div>
-          </blockquote>
+          <div className="space-y-8">
+            <p className="text-lg font-medium">
+              T48ID adalah platform terbaik untuk menonton dan membeli tiket live stream theater JKT48.
+            </p>
+            <p className="text-lg">
+              Nikmati pertunjukan theater JKT48 favorit kamu dengan kualitas streaming terbaik, kapan saja dan di mana saja.
+            </p>
+          </div>
         </div>
       </div>
       <div className="lg:p-8 flex h-screen">

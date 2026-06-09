@@ -62,8 +62,6 @@ interface ActivePayment {
   timeout_minutes: number
 }
 
-
-
 // ─── Helpers ──────────────────────────────────────────────────
 
 function formatRp(amount: string | number) {
@@ -109,19 +107,22 @@ function useCountdown(targetDate: string | null) {
 
 // ─── QRIS Payment Modal ───────────────────────────────────────
 
-
-
-// 2. Tambahkan type annotation pada parameter fungsi
-function QrisModal({ payment, onClose, onSuccess }: { payment: ActivePayment; onClose: () => void; onSuccess: () => void })
+function QrisModal({
+  payment,
+  onClose,
+  onSuccess,
+}: {
+  payment: ActivePayment
+  onClose: () => void
+  onSuccess: (membershipExpiredAt: string | null) => void
+}) {
   const [pollStatus, setPollStatus] = useState<"pending" | "paid" | "expired" | "cancelled">("pending")
   const [cancelling, setCancelling] = useState(false)
   const [qrImage, setQrImage] = useState<string | null>(payment.qr_image)
   const [qrisContent, setQrisContent] = useState<string | null>(payment.qris_content)
-  const [expiredAt, setExpiredAt] = useState(payment.expired_at) // ← TAMBAH INI
+  const [expiredAt, setExpiredAt] = useState(payment.expired_at)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
-  const secsLeft = useCountdown(expiredAt) // ← PAKAI expiredAt STATE, bukan payment.expired_at
-  
-
+  const secsLeft = useCountdown(expiredAt)
 
   const mins = Math.floor(secsLeft / 60)
   const secs = secsLeft % 60
@@ -130,50 +131,46 @@ function QrisModal({ payment, onClose, onSuccess }: { payment: ActivePayment; on
     if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null }
   }, [])
 
-  // Polling status setiap POLL_INTERVAL_MS
   useEffect(() => {
     if (pollStatus !== "pending") return
 
     const poll = async () => {
-    try {
-      const res = await fetch(`${API_BASE}/qris/check/${payment.ref_id}?apikey=${API_KEY}`)
-      const data = await res.json()
+      try {
+        const res = await fetch(`${API_BASE}/qris/check/${payment.ref_id}?apikey=${API_KEY}`)
+        const data = await res.json()
 
-      if (!data.status) return
+        if (!data.status) return
 
-      const st = data.order_status as string
+        const st = data.order_status as string
 
-      if (data.data?.qr_image) setQrImage(data.data.qr_image)
-      if (data.data?.qris_content) setQrisContent(data.data.qris_content)
-      // ← TAMBAH: update expired_at dari server jika ada
-      if (data.data?.time_remaining?.seconds !== undefined) {
-        // Hitung ulang expired_at berdasarkan seconds dari server
-        const newExpiredAt = new Date(Date.now() + data.data.time_remaining.seconds * 1000).toISOString()
-        setExpiredAt(newExpiredAt)
-      }
+        if (data.data?.qr_image) setQrImage(data.data.qr_image)
+        if (data.data?.qris_content) setQrisContent(data.data.qris_content)
+        if (data.data?.time_remaining?.seconds !== undefined) {
+          const newExpiredAt = new Date(Date.now() + data.data.time_remaining.seconds * 1000).toISOString()
+          setExpiredAt(newExpiredAt)
+        }
 
-      if (st === "paid") {
-        stopPoll()
-        setPollStatus("paid")
-        toast.success("🎉 Pembayaran terkonfirmasi! Membership aktif.")
-        setTimeout(() => onSuccess(data.data?.membership_expired_at ?? null), 1500)
-      } else if (st === "expired") {
-        stopPoll()
-        setPollStatus("expired")
-        toast.error("QRIS expired. Silakan buat order baru.")
-      } else if (st === "cancelled") {
-        stopPoll()
-        setPollStatus("cancelled")
-      }
-    } catch (_) {}
-  }
+        if (st === "paid") {
+          stopPoll()
+          setPollStatus("paid")
+          toast.success("🎉 Pembayaran terkonfirmasi! Membership aktif.")
+          setTimeout(() => onSuccess(data.data?.membership_expired_at ?? null), 1500)
+        } else if (st === "expired") {
+          stopPoll()
+          setPollStatus("expired")
+          toast.error("QRIS expired. Silakan buat order baru.")
+        } else if (st === "cancelled") {
+          stopPoll()
+          setPollStatus("cancelled")
+        }
+      } catch (_) {}
+    }
 
-    poll() // langsung poll sekali
+    poll()
     pollRef.current = setInterval(poll, POLL_INTERVAL_MS)
     return stopPoll
   }, [payment.ref_id, pollStatus, stopPoll, onSuccess])
 
-  // Stop poll kalau countdown habis
   useEffect(() => {
     if (secsLeft === 0 && pollStatus === "pending") {
       stopPoll()
@@ -281,7 +278,7 @@ function QrisModal({ payment, onClose, onSuccess }: { payment: ActivePayment; on
             </div>
           )}
 
-          {/* ── Pending state — tampilkan QR ── */}
+          {/* ── Pending state ── */}
           {pollStatus === "pending" && (
             <>
               {/* Jumlah */}
@@ -311,7 +308,6 @@ function QrisModal({ payment, onClose, onSuccess }: { payment: ActivePayment; on
                       alt="QR Code Pembayaran"
                       className="h-52 w-52 rounded-lg border border-border object-contain"
                     />
-                    {/* Pulse indicator — masih menunggu */}
                     <span className="absolute -top-1.5 -right-1.5 flex h-4 w-4">
                       <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-yellow-400 opacity-75" />
                       <span className="relative inline-flex h-4 w-4 rounded-full bg-yellow-500" />
@@ -322,7 +318,6 @@ function QrisModal({ payment, onClose, onSuccess }: { payment: ActivePayment; on
                     <div className="h-8 w-8 animate-spin rounded-full border-2 border-muted-foreground border-t-transparent" />
                   </div>
                 )}
-
                 <p className="text-xs text-muted-foreground text-center">
                   Scan QR dengan aplikasi e-wallet atau mobile banking
                 </p>
@@ -335,7 +330,7 @@ function QrisModal({ payment, onClose, onSuccess }: { payment: ActivePayment; on
                   className="flex w-full items-center justify-center gap-2 rounded-md border border-input bg-background py-2 text-xs font-medium text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
                 >
                   <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
                   </svg>
                   Salin QRIS String
                 </button>
@@ -363,6 +358,7 @@ function QrisModal({ payment, onClose, onSuccess }: { payment: ActivePayment; on
               </button>
             </>
           )}
+
         </div>
       </div>
     </div>
@@ -372,22 +368,22 @@ function QrisModal({ payment, onClose, onSuccess }: { payment: ActivePayment; on
 // ─── Main Page ────────────────────────────────────────────────
 
 export default function MembershipPage() {
-  const [user, setUser]                   = useState<User | null>(null)
-  const [products, setProducts]           = useState<QrisProduct[]>([])
-  const [status, setStatus]               = useState<MembershipStatus | null>(null)
-  const [history, setHistory]             = useState<QrisOrder[]>([])
+  const [user, setUser]                       = useState<User | null>(null)
+  const [products, setProducts]               = useState<QrisProduct[]>([])
+  const [status, setStatus]                   = useState<MembershipStatus | null>(null)
+  const [history, setHistory]                 = useState<QrisOrder[]>([])
   const [loadingProducts, setLoadingProducts] = useState(true)
-  const [loadingBuy, setLoadingBuy]       = useState<string | null>(null) // product_code sedang diproses
-  const [activePayment, setActivePayment] = useState<ActivePayment | null>(null)
-  const [tab, setTab]                     = useState<"plans" | "orders">("plans")
+  const [loadingBuy, setLoadingBuy]           = useState<string | null>(null)
+  const [activePayment, setActivePayment]     = useState<ActivePayment | null>(null)
+  const [tab, setTab]                         = useState<"plans" | "orders">("plans")
 
-  // ── Load user dari cookie ──────────────────────────────────
+  // ── Load user ─────────────────────────────────────────────
   useEffect(() => {
     const raw = getCookie("t48_user")
     if (raw) { try { setUser(JSON.parse(raw)) } catch {} }
   }, [])
 
-  // ── Fetch produk QRIS (public) ─────────────────────────────
+  // ── Fetch products ────────────────────────────────────────
   useEffect(() => {
     fetch(`${API_BASE}/qris/products?apikey=${API_KEY}`)
       .then(r => r.json())
@@ -396,7 +392,7 @@ export default function MembershipPage() {
       .finally(() => setLoadingProducts(false))
   }, [])
 
-  // ── Fetch status membership & riwayat order (auth) ─────────
+  // ── Fetch membership status & order history ───────────────
   const fetchUserData = useCallback((u: User) => {
     fetchWithAuth(`${API_BASE}/membership/status/${u.user_id}?apikey=${API_KEY}`)
       .then(r => r.json())
@@ -413,7 +409,7 @@ export default function MembershipPage() {
     if (user) fetchUserData(user)
   }, [user, fetchUserData])
 
-  // ── Cek apakah ada order pending yang bisa di-resume ───────
+  // ── Check for resumable pending order ────────────────────
   useEffect(() => {
     if (!user || activePayment) return
 
@@ -422,7 +418,6 @@ export default function MembershipPage() {
       .then(d => {
         if (d.status && d.data?.length > 0) {
           const pending = d.data[0]
-          // Tanya user apakah ingin melanjutkan
           toast(
             `Ada pembayaran tertunda untuk ${pending.product_name}`,
             {
@@ -452,20 +447,11 @@ export default function MembershipPage() {
 
   const membershipActive = status?.is_active ?? false
 
-  // ── Beli produk → buat order QRIS ─────────────────────────
+  // ── Purchase ──────────────────────────────────────────────
   const handleBuy = async (product: QrisProduct) => {
-    if (!user) {
-      toast.error("Login terlebih dahulu")
-      return
-    }
-    if (!product.is_purchase_open) {
-      toast.error("Pembelian produk ini sedang ditutup")
-      return
-    }
-    if (product.stock_remaining <= 0) {
-      toast.error("Stok bulan ini sudah habis")
-      return
-    }
+    if (!user) { toast.error("Login terlebih dahulu"); return }
+    if (!product.is_purchase_open) { toast.error("Pembelian produk ini sedang ditutup"); return }
+    if (product.stock_remaining <= 0) { toast.error("Stok bulan ini sudah habis"); return }
 
     setLoadingBuy(product.product_code)
     try {
@@ -475,10 +461,7 @@ export default function MembershipPage() {
       })
       const data = await res.json()
 
-      if (!data.status) {
-        toast.error(data.message || "Gagal membuat order")
-        return
-      }
+      if (!data.status) { toast.error(data.message || "Gagal membuat order"); return }
 
       setActivePayment({
         ref_id:           data.data.ref_id,
@@ -500,16 +483,14 @@ export default function MembershipPage() {
     }
   }
 
-  // ── Callback setelah bayar sukses ──────────────────────────
-  const handlePaymentSuccess = useCallback((membershipExpiredAt: string | null) => {
+  // ── After payment success ─────────────────────────────────
+  const handlePaymentSuccess = useCallback((_membershipExpiredAt: string | null) => {
     setActivePayment(null)
     if (user) {
-      // Refresh status membership
       fetchWithAuth(`${API_BASE}/membership/status/${user.user_id}?apikey=${API_KEY}`)
         .then(r => r.json())
         .then(d => { if (d.status) setStatus(d.data) })
         .catch(() => {})
-      // Refresh riwayat
       fetchWithAuth(`${API_BASE}/qris/history?apikey=${API_KEY}&limit=20`)
         .then(r => r.json())
         .then(d => { if (d.status) setHistory(d.data.orders) })
@@ -595,12 +576,12 @@ export default function MembershipPage() {
           ) : (
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
               {products.map(product => {
-                const features  = parseFeatures(product.features)
-                const hasSale   = product.price_sale && Number(product.price_sale) < Number(product.price)
-                const price     = product.price_sale ?? product.price
-                const isBuying  = loadingBuy === product.product_code
-                const noStock   = product.stock_remaining <= 0
-                const closed    = !product.is_purchase_open
+                const features = parseFeatures(product.features)
+                const hasSale  = product.price_sale && Number(product.price_sale) < Number(product.price)
+                const price    = product.price_sale ?? product.price
+                const isBuying = loadingBuy === product.product_code
+                const noStock  = product.stock_remaining <= 0
+                const closed   = !product.is_purchase_open
 
                 return (
                   <div
@@ -615,7 +596,6 @@ export default function MembershipPage() {
                       </span>
                     )}
 
-                    {/* Stok badge */}
                     {product.stock_remaining <= 10 && product.stock_remaining > 0 && (
                       <span className="absolute top-3 right-3 rounded-full bg-orange-100 px-2 py-0.5 text-xs font-medium text-orange-700 dark:bg-orange-900/30 dark:text-orange-400">
                         Sisa {product.stock_remaining}
@@ -653,7 +633,6 @@ export default function MembershipPage() {
                       </ul>
                     )}
 
-                    {/* Metode pembayaran badge */}
                     <div className="mb-3 flex items-center gap-1.5">
                       <span className="rounded bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">QRIS</span>
                       <span className="text-xs text-muted-foreground">· Bayar langsung, aktif otomatis</span>
@@ -675,9 +654,9 @@ export default function MembershipPage() {
                           </svg>
                           Memproses...
                         </span>
-                      ) : noStock ? "Stok Habis"
-                        : closed   ? "Pembelian Ditutup"
-                        : !user    ? "Login untuk Membeli"
+                      ) : noStock   ? "Stok Habis"
+                        : closed    ? "Pembelian Ditutup"
+                        : !user     ? "Login untuk Membeli"
                         : membershipActive ? "Perpanjang"
                         : "Beli Sekarang"}
                     </button>
@@ -733,7 +712,6 @@ export default function MembershipPage() {
                     </div>
                   </div>
 
-                  {/* Resume pembayaran pending */}
                   {order.status === "pending" && (
                     <div className="mt-3 flex items-center justify-between rounded-md bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 px-3 py-2">
                       <p className="text-xs text-yellow-800 dark:text-yellow-300">
@@ -744,7 +722,7 @@ export default function MembershipPage() {
                           fetchWithAuth(`${API_BASE}/qris/resume/${user!.user_id}?apikey=${API_KEY}`)
                             .then(r => r.json())
                             .then(d => {
-                              const found = d.data?.find((o: any) => o.ref_id === order.ref_id)
+                              const found = d.data?.find((o: { ref_id: string }) => o.ref_id === order.ref_id)
                               if (found) {
                                 setActivePayment({
                                   ref_id:           found.ref_id,
@@ -784,6 +762,7 @@ export default function MembershipPage() {
           onSuccess={handlePaymentSuccess}
         />
       )}
+
     </div>
   )
 }

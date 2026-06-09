@@ -134,10 +134,10 @@ type TicketShow = {
     effective_price: number
     stock_remaining: number
     token_max_uses: number
-   // token_ttl_hours: number
+    token_ttl_hours: number
     sold_count?: number
     max_stock?: number
-    token_ttl_hours?: number
+  //  token_ttl_hours?: number
   }
 }
 

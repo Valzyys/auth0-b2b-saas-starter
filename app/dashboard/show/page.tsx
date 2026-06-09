@@ -665,7 +665,7 @@ function OrderRow({
             🎟️ Ticket aktif
           </p>
           <a
-            href={`/dashboard/live/${order.show_id}`}
+            href={`/dashboard/live/${order.live_token_id}`}
             className="ml-3 shrink-0 rounded-md bg-green-600 px-3 py-1 text-xs font-medium text-white hover:bg-green-700 transition-colors"
           >
             Tonton

@@ -2,12 +2,12 @@
 
 import { useEffect, useState, useRef, useCallback } from "react"
 
-// ─── API Constants ────────────────────────────────────────────
-const API_BASE   = "https://v5.jkt48connect.com/api/team48"
-const API_KEY    = "JKTCONNECT"
-const POLL_MS    = 4000
+// ─── API Constants ─────────────────────────────────────────
+const API_BASE = "https://v5.jkt48connect.com/api/team48"
+const API_KEY  = "JKTCONNECT"
+const POLL_MS  = 4000
 
-// ─── Types ────────────────────────────────────────────────────
+// ─── Types ─────────────────────────────────────────────────
 
 interface TicketInfo {
   is_configured:   boolean
@@ -49,7 +49,20 @@ interface ActivePayment {
   timeout_minutes:  number
 }
 
-// ─── Helpers ──────────────────────────────────────────────────
+interface TicketOrder {
+  ref_id:           string
+  show_id:          string
+  show_title:       string
+  amount:           number
+  formatted_amount: string
+  status:           string
+  live_token_id:    string | null
+  paid_at:          string | null
+  expired_at:       string
+  created_at:       string
+}
+
+// ─── Helpers ───────────────────────────────────────────────
 
 function formatRp(amount: number) {
   return new Intl.NumberFormat("id-ID", {
@@ -57,11 +70,19 @@ function formatRp(amount: number) {
   }).format(amount)
 }
 
-function formatDate(ts: number) {
+function formatDate(ts: number | string | null) {
   if (!ts) return "-"
-  return new Date(ts * 1000).toLocaleDateString("id-ID", {
+  const d = typeof ts === "number" ? new Date(ts * 1000) : new Date(ts)
+  return d.toLocaleDateString("id-ID", {
     weekday: "long", day: "numeric", month: "long", year: "numeric",
     timeZone: "Asia/Jakarta",
+  })
+}
+
+function formatDateShort(dateStr: string | null) {
+  if (!dateStr) return "-"
+  return new Date(dateStr).toLocaleDateString("id-ID", {
+    day: "numeric", month: "long", year: "numeric", timeZone: "Asia/Jakarta",
   })
 }
 
@@ -90,7 +111,27 @@ async function fetchWithAuth(url: string, options: RequestInit = {}) {
   })
 }
 
-// ─── Sub-components ───────────────────────────────────────────
+function statusColor(status: string) {
+  switch (status) {
+    case "paid":      return "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400"
+    case "pending":   return "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400"
+    case "expired":   return "bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400"
+    case "cancelled": return "bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400"
+    default:          return "bg-gray-100 text-gray-500"
+  }
+}
+
+function statusLabel(status: string) {
+  switch (status) {
+    case "paid":      return "Lunas"
+    case "pending":   return "Menunggu"
+    case "expired":   return "Kedaluwarsa"
+    case "cancelled": return "Dibatalkan"
+    default:          return status
+  }
+}
+
+// ─── Sub-components ────────────────────────────────────────
 
 function StatusBadge({ status }: { status: string }) {
   const map: Record<string, { label: string; cls: string }> = {
@@ -121,15 +162,15 @@ function SkeletonCard() {
   )
 }
 
-// ─── QRIS Payment Modal ───────────────────────────────────────
+// ─── QRIS Payment Modal ────────────────────────────────────
 
 function QrisModal({
   payment,
   onClose,
   onSuccess,
 }: {
-  payment: ActivePayment
-  onClose: () => void
+  payment:   ActivePayment
+  onClose:   () => void
   onSuccess: () => void
 }) {
   const [pollStatus, setPollStatus] = useState<"pending" | "paid" | "expired" | "cancelled">("pending")
@@ -180,7 +221,6 @@ function QrisModal({
     return stopPoll
   }, [payment.ref_id, pollStatus, stopPoll, onSuccess])
 
-  // local countdown tick
   useEffect(() => {
     if (pollStatus !== "pending" || secsLeft <= 0) return
     const t = setInterval(() => setSecsLeft(p => {
@@ -243,7 +283,7 @@ function QrisModal({
               </div>
               <div className="text-center">
                 <p className="font-semibold">Ticket Berhasil Dibeli!</p>
-                <p className="text-sm text-muted-foreground mt-1">Lihat tiket kamu di halaman My Tickets.</p>
+                <p className="text-sm text-muted-foreground mt-1">Lihat tiket kamu di tab Riwayat.</p>
               </div>
               <button onClick={onClose} className="mt-2 w-full rounded-md bg-primary py-2.5 text-sm font-medium text-primary-foreground hover:bg-primary/90">
                 Tutup
@@ -290,13 +330,11 @@ function QrisModal({
           {/* ── Pending ── */}
           {pollStatus === "pending" && (
             <>
-              {/* Jumlah */}
               <div className="flex items-center justify-between rounded-lg bg-muted px-4 py-2.5">
                 <span className="text-sm text-muted-foreground">Total bayar</span>
                 <span className="font-bold text-lg">{payment.formatted_amount}</span>
               </div>
 
-              {/* Countdown */}
               <div className={`flex items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm font-medium ${
                 secsLeft < 120
                   ? "bg-red-50 text-red-600 dark:bg-red-900/20 dark:text-red-400"
@@ -308,7 +346,6 @@ function QrisModal({
                 Berakhir dalam {mins}m {String(secs).padStart(2, "0")}s
               </div>
 
-              {/* QR Code */}
               <div className="flex flex-col items-center gap-3">
                 {qrImage ? (
                   <div className="relative">
@@ -332,7 +369,6 @@ function QrisModal({
                 </p>
               </div>
 
-              {/* Copy QRIS */}
               {qrisContent && (
                 <button
                   onClick={handleCopy}
@@ -345,19 +381,16 @@ function QrisModal({
                 </button>
               )}
 
-              {/* Ref ID */}
               <div className="rounded-md bg-muted/50 px-3 py-2 text-xs text-muted-foreground">
                 <span className="font-medium">Ref ID:</span>{" "}
                 <span className="font-mono break-all">{payment.ref_id}</span>
               </div>
 
-              {/* Polling indicator */}
               <div className="flex items-center justify-center gap-1.5 text-xs text-muted-foreground">
                 <span className="inline-flex h-2 w-2 rounded-full bg-yellow-500 animate-pulse" />
                 Menunggu konfirmasi pembayaran...
               </div>
 
-              {/* Cancel */}
               <button
                 onClick={handleCancel}
                 disabled={cancelling}
@@ -373,18 +406,22 @@ function QrisModal({
   )
 }
 
-// ─── Show Card ────────────────────────────────────────────────
+// ─── Show Card ─────────────────────────────────────────────
 
 function ShowCard({
   show,
   onBuy,
   buying,
   isLoggedIn,
+  isPurchased,
+  onResumePay,
 }: {
-  show:      Show
-  onBuy:     (show: Show) => void
-  buying:    boolean
-  isLoggedIn: boolean
+  show:          Show
+  onBuy:         (show: Show) => void
+  buying:        boolean
+  isLoggedIn:    boolean
+  isPurchased:   boolean
+  onResumePay?:  (showId: string) => void
 }) {
   const [imgError, setImgError] = useState(false)
   const t = show.ticket
@@ -395,7 +432,7 @@ function ShowCard({
   const isEnded    = show.status === "ended"
 
   return (
-    <div className={`group flex flex-col rounded-xl border border-border bg-card overflow-hidden shadow-sm hover:shadow-md transition-shadow ${(soldOut || isEnded) ? "opacity-70" : ""}`}>
+    <div className={`group flex flex-col rounded-xl border border-border bg-card overflow-hidden shadow-sm hover:shadow-md transition-shadow ${(soldOut || isEnded) && !isPurchased ? "opacity-70" : ""}`}>
 
       {/* Thumbnail */}
       <div className="relative h-48 overflow-hidden bg-muted shrink-0">
@@ -414,20 +451,29 @@ function ShowCard({
           </div>
         )}
 
-        {/* Status badge */}
         <div className="absolute top-2.5 left-2.5">
           <StatusBadge status={show.status} />
         </div>
 
-        {/* IDN Gold price badge */}
         {show.idn_gold_price != null && (
           <div className="absolute top-2.5 right-2.5 rounded-full bg-black/70 px-2.5 py-0.5 text-xs font-medium text-yellow-300">
             {show.idn_gold_price} gold
           </div>
         )}
 
-        {/* Sold out overlay */}
-        {soldOut && !isEnded && (
+        {/* Purchased overlay */}
+        {isPurchased && (
+          <div className="absolute inset-0 flex items-center justify-center bg-black/50">
+            <span className="flex items-center gap-1.5 rounded-full bg-green-500 px-3 py-1.5 text-xs font-semibold text-white shadow">
+              <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
+              </svg>
+              Ticket Dimiliki
+            </span>
+          </div>
+        )}
+
+        {soldOut && !isEnded && !isPurchased && (
           <div className="absolute inset-0 flex items-center justify-center bg-black/50">
             <span className="rounded-full bg-red-500 px-3 py-1 text-xs font-semibold text-white">
               Ticket Habis
@@ -439,12 +485,10 @@ function ShowCard({
       {/* Content */}
       <div className="flex flex-1 flex-col gap-2.5 p-4 bg-card">
 
-        {/* Title */}
         <h3 className="font-semibold text-sm leading-snug line-clamp-2 text-foreground">
           {show.title}
         </h3>
 
-        {/* Schedule */}
         <div className="space-y-1">
           {show.scheduled_at != null && show.scheduled_at > 0 && (
             <>
@@ -470,82 +514,168 @@ function ShowCard({
           )}
         </div>
 
-        {/* Description */}
         {show.description && (
           <p className="text-xs text-muted-foreground leading-relaxed line-clamp-2 whitespace-pre-line">
             {show.description.trim()}
           </p>
         )}
 
-        {/* Ticket price + stock */}
-        {!isEnded && (
-          <div className="mt-auto pt-1 space-y-2">
-            {/* Price row */}
-            <div className="flex items-center justify-between">
-              <div className="flex items-baseline gap-1.5">
-                <span className="font-bold text-sm text-foreground">
-                  {formatRp(t.effective_price)}
+        <div className="mt-auto pt-1 space-y-2">
+          {/* Purchased state */}
+          {isPurchased ? (
+            <div className="space-y-2">
+              <div className="flex items-center gap-2 rounded-lg bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 px-3 py-2">
+                <svg className="h-3.5 w-3.5 text-green-600 dark:text-green-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
+                </svg>
+                <span className="text-xs font-medium text-green-700 dark:text-green-400">
+                  Ticket sudah dibeli
                 </span>
-                {hasSale && (
-                  <span className="text-xs line-through text-muted-foreground">
-                    {formatRp(t.price)}
+              </div>
+              {show.status === "live" && (
+                <a
+                  href={`/dashboard/live/${show.show_id}`}
+                  className="flex w-full items-center justify-center gap-2 rounded-md bg-red-600 py-2 text-sm font-medium text-white hover:bg-red-700 transition-colors"
+                >
+                  <span className="h-1.5 w-1.5 rounded-full bg-white animate-pulse" />
+                  Tonton Sekarang
+                </a>
+              )}
+            </div>
+          ) : !isEnded ? (
+            <>
+              <div className="flex items-center justify-between">
+                <div className="flex items-baseline gap-1.5">
+                  <span className="font-bold text-sm text-foreground">
+                    {formatRp(t.effective_price)}
+                  </span>
+                  {hasSale && (
+                    <span className="text-xs line-through text-muted-foreground">
+                      {formatRp(t.price)}
+                    </span>
+                  )}
+                </div>
+                {!soldOut && t.stock_remaining <= 10 && t.stock_remaining > 0 && (
+                  <span className="rounded-full bg-orange-100 dark:bg-orange-900/30 px-2 py-0.5 text-xs font-medium text-orange-700 dark:text-orange-400">
+                    Sisa {t.stock_remaining}
                   </span>
                 )}
               </div>
-              {/* Stock indicator */}
-              {!soldOut && t.stock_remaining <= 10 && t.stock_remaining > 0 && (
-                <span className="rounded-full bg-orange-100 dark:bg-orange-900/30 px-2 py-0.5 text-xs font-medium text-orange-700 dark:text-orange-400">
-                  Sisa {t.stock_remaining}
-                </span>
-              )}
-            </div>
 
-            {/* Buy button */}
-            <button
-              onClick={() => onBuy(show)}
-              disabled={buying || soldOut || unavailable || !isLoggedIn || !show.show_id}
-              className={`w-full rounded-md py-2 text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
-                show.status === "live"
-                  ? "bg-red-600 text-white hover:bg-red-700"
-                  : "bg-primary text-primary-foreground hover:bg-primary/90"
-              }`}
-            >
-              {buying
-                ? <span className="flex items-center justify-center gap-2">
-                    <svg className="h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                    </svg>
-                    Memproses...
-                  </span>
-                : !isLoggedIn
-                ? "Login untuk Beli Ticket"
-                : !show.show_id
-                ? "Belum Tersedia"
-                : soldOut
-                ? "Ticket Habis"
-                : unavailable
-                ? "Penjualan Ditutup"
-                : show.status === "live"
-                ? "🔴 Beli Ticket Sekarang"
-                : "Beli Ticket"}
-            </button>
-          </div>
-        )}
-
-        {/* Ended state */}
-        {isEnded && (
-          <div className="mt-auto pt-1">
+              <button
+                onClick={() => onBuy(show)}
+                disabled={buying || soldOut || unavailable || !isLoggedIn || !show.show_id}
+                className={`w-full rounded-md py-2 text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+                  show.status === "live"
+                    ? "bg-red-600 text-white hover:bg-red-700"
+                    : "bg-primary text-primary-foreground hover:bg-primary/90"
+                }`}
+              >
+                {buying
+                  ? <span className="flex items-center justify-center gap-2">
+                      <svg className="h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                      </svg>
+                      Memproses...
+                    </span>
+                  : !isLoggedIn
+                  ? "Login untuk Beli Ticket"
+                  : !show.show_id
+                  ? "Belum Tersedia"
+                  : soldOut
+                  ? "Ticket Habis"
+                  : unavailable
+                  ? "Penjualan Ditutup"
+                  : show.status === "live"
+                  ? "🔴 Beli Ticket Sekarang"
+                  : "Beli Ticket"}
+              </button>
+            </>
+          ) : (
             <div className="w-full rounded-md bg-muted py-2 text-center text-xs text-muted-foreground">
               Show Telah Selesai
             </div>
-          </div>
-        )}
+          )}
+        </div>
       </div>
     </div>
   )
 }
 
-// ─── Main Page ────────────────────────────────────────────────
+// ─── Order History Row ──────────────────────────────────────
+
+function OrderRow({
+  order,
+  onResume,
+  resuming,
+}: {
+  order:    TicketOrder
+  onResume: (order: TicketOrder) => void
+  resuming: boolean
+}) {
+  return (
+    <div className="rounded-xl border border-border bg-background p-4">
+      <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-2">
+        <div className="space-y-0.5">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="font-mono text-xs text-muted-foreground">{order.ref_id}</span>
+            <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${statusColor(order.status)}`}>
+              {statusLabel(order.status)}
+            </span>
+          </div>
+          <p className="font-medium text-sm">{order.show_title}</p>
+          {order.live_token_id && (
+            <p className="text-xs text-muted-foreground font-mono">
+              Token: {order.live_token_id}
+            </p>
+          )}
+        </div>
+        <div className="text-right shrink-0">
+          <p className="font-semibold text-sm">{order.formatted_amount}</p>
+          {order.paid_at && (
+            <p className="text-xs text-green-600 dark:text-green-400 mt-0.5">
+              Dibayar {formatDateShort(order.paid_at)}
+            </p>
+          )}
+          <p className="text-xs text-muted-foreground mt-0.5">
+            {formatDateShort(order.created_at)}
+          </p>
+        </div>
+      </div>
+
+      {order.status === "pending" && (
+        <div className="mt-3 flex items-center justify-between rounded-md bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 px-3 py-2">
+          <p className="text-xs text-yellow-800 dark:text-yellow-300">
+            Menunggu pembayaran · Expired {formatDateShort(order.expired_at)}
+          </p>
+          <button
+            onClick={() => onResume(order)}
+            disabled={resuming}
+            className="ml-3 shrink-0 rounded-md bg-yellow-500 px-3 py-1 text-xs font-medium text-white hover:bg-yellow-600 transition-colors disabled:opacity-50"
+          >
+            {resuming ? "Memuat..." : "Lanjutkan Bayar"}
+          </button>
+        </div>
+      )}
+
+      {order.status === "paid" && order.live_token_id && (
+        <div className="mt-3 flex items-center justify-between rounded-md bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 px-3 py-2">
+          <p className="text-xs text-green-800 dark:text-green-300 font-medium">
+            🎟️ Ticket aktif
+          </p>
+          <a
+            href={`/dashboard/live/${order.show_id}`}
+            className="ml-3 shrink-0 rounded-md bg-green-600 px-3 py-1 text-xs font-medium text-white hover:bg-green-700 transition-colors"
+          >
+            Tonton
+          </a>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─── Main Page ─────────────────────────────────────────────
 
 export default function SchedulePage() {
   const [shows, setShows]               = useState<Show[]>([])
@@ -556,26 +686,75 @@ export default function SchedulePage() {
   const [activePayment, setActivePayment] = useState<ActivePayment | null>(null)
   const [buyError, setBuyError]         = useState<string | null>(null)
   const [isLoggedIn, setIsLoggedIn]     = useState(false)
+  const [tab, setTab]                   = useState<"shows" | "history">("shows")
 
-  // Detect login from cookie
+  // show_id set → sudah punya ticket valid
+  const [purchasedShowIds, setPurchasedShowIds] = useState<Set<string>>(new Set())
+
+  // Order history
+  const [history, setHistory]           = useState<TicketOrder[]>([])
+  const [loadingHistory, setLoadingHistory] = useState(false)
+  const [resuming, setResuming]         = useState<string | null>(null)
+
+  // Detect login
   useEffect(() => {
     setIsLoggedIn(!!getAccessToken())
   }, [])
 
   // Fetch shows
-  useEffect(() => {
-    fetch(`${API_BASE}/ticket/shows?apikey=${API_KEY}`)
+  const fetchShows = useCallback(() => {
+    return fetch(`${API_BASE}/ticket/shows?apikey=${API_KEY}`)
       .then(r => r.json())
       .then(d => {
-        if (d.status && Array.isArray(d.data)) {
-          setShows(d.data)
-        } else {
-          setError("Gagal memuat jadwal show.")
-        }
+        if (d.status && Array.isArray(d.data)) setShows(d.data)
+        else setError("Gagal memuat jadwal show.")
       })
       .catch(() => setError("Terjadi kesalahan jaringan."))
-      .finally(() => setLoading(false))
   }, [])
+
+  useEffect(() => {
+    fetchShows().finally(() => setLoading(false))
+  }, [fetchShows])
+
+  // Fetch purchased tickets (my-tickets) untuk badge
+  const fetchPurchased = useCallback(async () => {
+    if (!getAccessToken()) return
+    try {
+      const res  = await fetchWithAuth(`${API_BASE}/ticket/my-tickets?apikey=${API_KEY}`)
+      const data = await res.json()
+      if (data.status && Array.isArray(data.data?.tickets)) {
+        const ids = new Set<string>(
+          data.data.tickets
+            .filter((t: { is_valid: boolean }) => t.is_valid)
+            .map((t: { show_id: string }) => t.show_id)
+        )
+        setPurchasedShowIds(ids)
+      }
+    } catch (_) {}
+  }, [])
+
+  useEffect(() => {
+    if (isLoggedIn) fetchPurchased()
+  }, [isLoggedIn, fetchPurchased])
+
+  // Fetch order history
+  const fetchHistory = useCallback(async () => {
+    if (!getAccessToken()) return
+    setLoadingHistory(true)
+    try {
+      const res  = await fetchWithAuth(`${API_BASE}/ticket/order-history?apikey=${API_KEY}&limit=50`)
+      const data = await res.json()
+      if (data.status && Array.isArray(data.data?.orders)) {
+        setHistory(data.data.orders)
+      }
+    } catch (_) {} finally {
+      setLoadingHistory(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (isLoggedIn && tab === "history") fetchHistory()
+  }, [isLoggedIn, tab, fetchHistory])
 
   const filtered = filter === "all" ? shows : shows.filter(s => s.status === filter)
 
@@ -640,14 +819,56 @@ export default function SchedulePage() {
     }
   }
 
+  // Resume payment dari order history
+  const handleResumeFromHistory = useCallback(async (order: TicketOrder) => {
+    setResuming(order.ref_id)
+    try {
+      // Re-check status dulu untuk ambil QRIS terbaru
+      const res  = await fetch(`${API_BASE}/ticket/check/${order.ref_id}?apikey=${API_KEY}`)
+      const data = await res.json()
+
+      if (data.order_status === "paid") {
+        // Sudah lunas, refresh history
+        await fetchHistory()
+        await fetchPurchased()
+        return
+      }
+
+      if (data.order_status === "pending" && data.data) {
+        setActivePayment({
+          ref_id:           order.ref_id,
+          ybp_trx_id:       "",
+          show_id:          order.show_id,
+          show_title:       order.show_title,
+          amount:           data.data.amount_to_pay ?? order.amount,
+          formatted_amount: data.data.formatted_amount ?? order.formatted_amount,
+          qris_content:     data.data.qris_content,
+          qr_image:         data.data.qr_image,
+          expired_at:       order.expired_at,
+          timeout_minutes:  60,
+        })
+      } else {
+        // Expired atau cancelled, refresh
+        await fetchHistory()
+      }
+    } catch (_) {
+      setBuyError("Gagal memuat data pembayaran.")
+    } finally {
+      setResuming(null)
+    }
+  }, [fetchHistory, fetchPurchased])
+
   const handlePaymentSuccess = useCallback(() => {
     setActivePayment(null)
-    // Refresh show list
-    fetch(`${API_BASE}/ticket/shows?apikey=${API_KEY}`)
-      .then(r => r.json())
-      .then(d => { if (d.status && Array.isArray(d.data)) setShows(d.data) })
-      .catch(() => {})
-  }, [])
+    fetchShows()
+    fetchPurchased()
+    // Juga refresh history kalau sudah di-load
+    fetchHistory()
+    // Pindah ke tab history agar user bisa lihat ticket baru
+    setTab("history")
+  }, [fetchShows, fetchPurchased, fetchHistory])
+
+  const pendingOrderCount = history.filter(o => o.status === "pending").length
 
   return (
     <div className="max-w-5xl mx-auto px-4 py-8 space-y-6">
@@ -679,56 +900,130 @@ export default function SchedulePage() {
         </div>
       )}
 
-      {/* Filter tabs */}
-      <div className="flex border-b border-border gap-5 overflow-x-auto">
-        {tabs.map(t => (
-          <button
-            key={t.key}
-            onClick={() => setFilter(t.key)}
-            className={`pb-3 text-sm font-medium transition-colors border-b-2 -mb-px whitespace-nowrap ${
-              filter === t.key
-                ? "border-primary text-foreground"
-                : "border-transparent text-muted-foreground hover:text-foreground"
-            }`}
-          >
-            {t.label}
-            {t.key !== "all" && (
-              <span className="ml-1.5 text-xs text-muted-foreground">
-                ({shows.filter(s => s.status === t.key).length})
-              </span>
-            )}
-          </button>
-        ))}
+      {/* Main tabs: Shows / History */}
+      <div className="flex border-b border-border gap-6">
+        <button
+          onClick={() => setTab("shows")}
+          className={`pb-3 text-sm font-medium transition-colors border-b-2 -mb-px ${
+            tab === "shows"
+              ? "border-primary text-foreground"
+              : "border-transparent text-muted-foreground hover:text-foreground"
+          }`}
+        >
+          Jadwal Show
+        </button>
+        <button
+          onClick={() => { setTab("history"); if (isLoggedIn && history.length === 0) fetchHistory() }}
+          className={`pb-3 text-sm font-medium transition-colors border-b-2 -mb-px flex items-center gap-1.5 ${
+            tab === "history"
+              ? "border-primary text-foreground"
+              : "border-transparent text-muted-foreground hover:text-foreground"
+          }`}
+        >
+          Riwayat Pembelian
+          {pendingOrderCount > 0 && (
+            <span className="rounded-full bg-yellow-500 px-1.5 py-0.5 text-xs font-semibold text-white leading-none">
+              {pendingOrderCount}
+            </span>
+          )}
+        </button>
       </div>
 
-      {/* Fetch error */}
-      {error && (
-        <div className="rounded-lg border border-red-200 bg-red-50 dark:border-red-800 dark:bg-red-900/20 px-4 py-3 text-sm text-red-700 dark:text-red-400">
-          {error}
-        </div>
+      {/* ── Tab: Shows ── */}
+      {tab === "shows" && (
+        <>
+          {/* Filter tabs */}
+          <div className="flex border-b border-border gap-5 overflow-x-auto -mt-2">
+            {tabs.map(t => (
+              <button
+                key={t.key}
+                onClick={() => setFilter(t.key)}
+                className={`pb-3 text-sm font-medium transition-colors border-b-2 -mb-px whitespace-nowrap ${
+                  filter === t.key
+                    ? "border-primary text-foreground"
+                    : "border-transparent text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                {t.label}
+                {t.key !== "all" && (
+                  <span className="ml-1.5 text-xs text-muted-foreground">
+                    ({shows.filter(s => s.status === t.key).length})
+                  </span>
+                )}
+              </button>
+            ))}
+          </div>
+
+          {error && (
+            <div className="rounded-lg border border-red-200 bg-red-50 dark:border-red-800 dark:bg-red-900/20 px-4 py-3 text-sm text-red-700 dark:text-red-400">
+              {error}
+            </div>
+          )}
+
+          {loading ? (
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              {[1, 2, 3].map(i => <SkeletonCard key={i} />)}
+            </div>
+          ) : filtered.length === 0 ? (
+            <div className="py-20 text-center text-muted-foreground text-sm">
+              Tidak ada show untuk kategori ini.
+            </div>
+          ) : (
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              {filtered.map(show => (
+                <ShowCard
+                  key={show.slug}
+                  show={show}
+                  onBuy={handleBuy}
+                  buying={buying === show.show_id}
+                  isLoggedIn={isLoggedIn}
+                  isPurchased={!!show.show_id && purchasedShowIds.has(show.show_id)}
+                />
+              ))}
+            </div>
+          )}
+        </>
       )}
 
-      {/* Grid */}
-      {loading ? (
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {[1, 2, 3].map(i => <SkeletonCard key={i} />)}
-        </div>
-      ) : filtered.length === 0 ? (
-        <div className="py-20 text-center text-muted-foreground text-sm">
-          Tidak ada show untuk kategori ini.
-        </div>
-      ) : (
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {filtered.map(show => (
-            <ShowCard
-              key={show.slug}
-              show={show}
-              onBuy={handleBuy}
-              buying={buying === show.show_id}
-              isLoggedIn={isLoggedIn}
-            />
-          ))}
-        </div>
+      {/* ── Tab: History ── */}
+      {tab === "history" && (
+        <>
+          {!isLoggedIn ? (
+            <div className="py-16 text-center text-muted-foreground text-sm">
+              Login untuk melihat riwayat pembelian ticket.
+            </div>
+          ) : loadingHistory ? (
+            <div className="space-y-3">
+              {[1, 2, 3].map(i => (
+                <div key={i} className="h-24 rounded-xl border border-border bg-muted animate-pulse" />
+              ))}
+            </div>
+          ) : history.length === 0 ? (
+            <div className="py-16 text-center space-y-2">
+              <svg className="mx-auto h-10 w-10 text-muted-foreground/30" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+              </svg>
+              <p className="text-muted-foreground text-sm">Belum ada riwayat pembelian ticket.</p>
+              <button
+                onClick={() => setTab("shows")}
+                className="text-sm text-primary underline underline-offset-4 hover:text-primary/80"
+              >
+                Lihat jadwal show →
+              </button>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {history.map(order => (
+                <OrderRow
+                  key={order.ref_id}
+                  order={order}
+                  onResume={handleResumeFromHistory}
+                  resuming={resuming === order.ref_id}
+                />
+              ))}
+            </div>
+          )}
+        </>
       )}
 
       {/* QRIS Modal */}

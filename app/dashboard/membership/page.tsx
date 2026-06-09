@@ -120,12 +120,11 @@ function QrisModal({
   const [cancelling, setCancelling] = useState(false)
   const [qrImage, setQrImage] = useState<string | null>(payment.qr_image)
   const [qrisContent, setQrisContent] = useState<string | null>(payment.qris_content)
-  // Start with null so countdown doesn't fire until first poll confirms time_remaining
-  const [expiredAt, setExpiredAt] = useState<string | null>(null)
-  // Track whether first poll has completed
-  const [pollReady, setPollReady] = useState(false)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
-  const secsLeft = useCountdown(expiredAt)
+
+  // Countdown: always 1 hour from when the modal was opened (matches QRIS timeout)
+  const deadlineRef = useRef<string>(new Date(Date.now() + 60 * 60 * 1000).toISOString())
+  const secsLeft = useCountdown(deadlineRef.current)
 
   const mins = Math.floor(secsLeft / 60)
   const secs = secsLeft % 60
@@ -151,34 +150,6 @@ function QrisModal({
         if (orderDetail?.qr_image) setQrImage(orderDetail.qr_image)
         if (orderDetail?.qris_content) setQrisContent(orderDetail.qris_content)
 
-        // /qris/check has no time_remaining — use expired_at from the order detail instead.
-        // /qris/check (polling) uses expired_at; /qris/buy uses time_remaining.
-        const serverSecs: number | undefined = orderDetail?.time_remaining?.seconds
-        const expiredAtFromServer: string | undefined = orderDetail?.expired_at
-
-        if (serverSecs !== undefined && serverSecs > 5) {
-          // buy-style response with time_remaining
-          const newExpiredAt = new Date(Date.now() + serverSecs * 1000).toISOString()
-          setExpiredAt(prev => {
-            if (!prev) return newExpiredAt
-            return new Date(newExpiredAt) > new Date(prev) ? newExpiredAt : prev
-          })
-          setPollReady(true)
-        } else if (expiredAtFromServer) {
-          // check-style response with expired_at timestamp
-          const msLeft = new Date(expiredAtFromServer).getTime() - Date.now()
-          if (msLeft > 5000) {
-            setExpiredAt(prev => {
-              if (!prev) return expiredAtFromServer
-              return new Date(expiredAtFromServer) > new Date(prev) ? expiredAtFromServer : prev
-            })
-            setPollReady(true)
-          } else {
-            // expired_at is in the past — let order_status drive state, not countdown
-            setPollReady(false)
-          }
-        }
-
         if (st === "paid") {
           stopPoll()
           setPollStatus("paid")
@@ -200,13 +171,13 @@ function QrisModal({
     return stopPoll
   }, [payment.ref_id, pollStatus, stopPoll, onSuccess])
 
-  // Only let countdown trigger expired AFTER first poll confirms time_remaining
+  // Countdown hits zero → mark as expired
   useEffect(() => {
-    if (secsLeft === 0 && pollStatus === "pending" && pollReady) {
+    if (secsLeft === 0 && pollStatus === "pending") {
       stopPoll()
       setPollStatus("expired")
     }
-  }, [secsLeft, pollStatus, pollReady, stopPoll])
+  }, [secsLeft, pollStatus, stopPoll])
 
   const handleCancel = async () => {
     setCancelling(true)
@@ -319,18 +290,14 @@ function QrisModal({
 
               {/* Countdown */}
               <div className={`flex items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm font-medium ${
-                !pollReady
-                  ? "bg-muted text-muted-foreground"
-                  : secsLeft < 120
+                secsLeft < 120
                   ? "bg-red-50 text-red-600 dark:bg-red-900/20 dark:text-red-400"
                   : "bg-yellow-50 text-yellow-700 dark:bg-yellow-900/20 dark:text-yellow-400"
               }`}>
                 <svg className="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
                 </svg>
-                {!pollReady
-                  ? "Memuat waktu..."
-                  : `Berakhir dalam ${mins}m ${String(secs).padStart(2, "0")}s`}
+                Berakhir dalam {mins}m {String(secs).padStart(2, "0")}s
               </div>
 
               {/* QR Image */}

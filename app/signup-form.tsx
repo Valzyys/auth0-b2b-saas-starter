@@ -69,7 +69,7 @@ export function SignUpForm() {
       <div className="w-full max-w-sm px-4">
         <div className="mb-6 flex flex-col space-y-2 text-center">
           <h1 className="text-2xl font-semibold tracking-tight">
-            Daftar ke JKT48Connect
+            Daftar ke T48ID
           </h1>
           <p className="text-sm text-muted-foreground">
             Buat akun untuk menikmati layanan live streaming, tiket, dan membership JKT48.
@@ -189,11 +189,11 @@ export function SignUpForm() {
 
         <p className="mt-3 px-4 text-center text-sm text-muted-foreground">
           Dengan mendaftar, kamu menyetujui{" "}
-          <Link href="/terms" className="underline underline-offset-4 hover:text-primary">
+          <Link href="/term" className="underline underline-offset-4 hover:text-primary">
             Syarat & Ketentuan
           </Link>{" "}
           dan{" "}
-          <Link href="/privacy" className="underline underline-offset-4 hover:text-primary">
+          <Link href="/privac" className="underline underline-offset-4 hover:text-primary">
             Kebijakan Privasi
           </Link>
           .

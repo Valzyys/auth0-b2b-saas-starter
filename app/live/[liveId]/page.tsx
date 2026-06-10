@@ -9,6 +9,34 @@ const IDN_API   = "https://v5.jkt48connect.com/api/jkt48/idnplus?apikey=JKTCONNE
 const API_KEY   = "JKTCONNECT"
 const LS_PREFIX = "t48_live_access_"
 
+// ─── Slug thumbnail overrides ─────────────────────────────────
+// Key: substring yang ada di slug (case-insensitive)
+// Value: URL gambar pengganti
+const SLUG_THUMBNAIL_OVERRIDES: { pattern: string; image: string }[] = [
+  {
+    pattern: "request-hour",
+    image:   "https://files.catbox.moe/l5azzz.jpg",
+  },
+  // Tambah pattern lain di sini kalau perlu, contoh:
+  // { pattern: "birthday-show", image: "https://..." },
+]
+
+function getSlugThumbnail(slug: string | null | undefined): string | null {
+  if (!slug) return null
+  const lower = slug.toLowerCase()
+  for (const entry of SLUG_THUMBNAIL_OVERRIDES) {
+    if (lower.includes(entry.pattern.toLowerCase())) return entry.image
+  }
+  return null
+}
+
+// Apply thumbnail override ke show object (tidak mutate asli)
+function applyThumbnailOverride(show: IdnShow): IdnShow {
+  const override = getSlugThumbnail(show.slug)
+  if (!override) return show
+  return { ...show, image_url: override }
+}
+
 // ─── Types ───────────────────────────────────────────────────
 interface LiveTokenInfo {
   live_id:        string
@@ -627,23 +655,24 @@ export default function LiveTokenPage() {
 
     if (showId) {
       const exact = all.find(s => s.showId === showId)
-      if (exact) return exact
+      if (exact) return applyThumbnailOverride(exact)
     }
 
     // showId null or not matched — pick best available show
     // Priority: live > soonest scheduled > most recent ended
     const live = all.filter(s => s.status === "live")
-    if (live.length) return live[0]
+    if (live.length) return applyThumbnailOverride(live[0])
 
     const now = Date.now() / 1000
     const upcoming = all
       .filter(s => s.status === "scheduled" && s.scheduled_at)
       .sort((a, b) => Math.abs((a.scheduled_at ?? 0) - now) - Math.abs((b.scheduled_at ?? 0) - now))
-    if (upcoming.length) return upcoming[0]
+    if (upcoming.length) return applyThumbnailOverride(upcoming[0])
 
     const ended = all.filter(s => s.status === "ended")
       .sort((a, b) => (b.end_at ?? 0) - (a.end_at ?? 0))
-    return ended[0] ?? all[0]
+    const fallback = ended[0] ?? all[0]
+    return fallback ? applyThumbnailOverride(fallback) : null
   }, [fetchAllShows])
 
   // ── Fetch stream ────────────────────────────────────────
@@ -799,7 +828,7 @@ export default function LiveTokenPage() {
       const showId = tokenInfo?.show_id ?? show?.showId ?? null
       const current = await findShow(showId)
       if (!current) return
-      setShow(current)
+      setShow(applyThumbnailOverride(current))
 
       if (current.status === "live") {
         clearInterval(pollingRef.current!)

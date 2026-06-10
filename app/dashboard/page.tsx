@@ -1,9 +1,8 @@
-"use client"
 
 import { useAuth, fetchWithAuth } from "@/hooks/useAuth"
 import { useEffect, useState, useCallback } from "react"
 
-const API_BASE = "https://v5.jkt48connect.com/api/team48"
+const API_BASE = "https://v5.jktconnect.com/api/team48"
 const API_KEY = "JKTCONNECT"
 
 // ── Types ─────────────────────────────────────────────────────
@@ -137,7 +136,6 @@ type TicketShow = {
     token_ttl_hours: number
     sold_count?: number
     max_stock?: number
-  //  token_ttl_hours?: number
   }
 }
 
@@ -197,6 +195,54 @@ type TicketConfig = {
   defaultStock: number
   defaultTokenMaxUses: number
   defaultTokenTtlHours: number
+}
+
+// ── Email Access Types ─────────────────────────────────────────
+
+type EmailAccessRow = {
+  id: number
+  email: string
+  show_id: string | null
+  label: string
+  valid_from: string | null
+  valid_until: string | null
+  max_uses: number | null
+  uses_count: number
+  uses_remaining: number | null
+  is_active: boolean
+  is_expired: boolean
+  is_maxed: boolean
+  is_global: boolean
+  last_used_at: string | null
+  notes: string | null
+  created_at: string
+}
+
+type EmailAccessStats = {
+  total: string
+  active: string
+  revoked: string
+  usable: string
+  expired: string
+  unique_emails: string
+}
+
+// ── Stream Source Types ────────────────────────────────────────
+
+type StreamSource = {
+  id: number
+  show_id: string
+  source_type: "rtmp" | "youtube" | "both"
+  rtmp_url: string | null
+  rtmp_label: string | null
+  rtmp_is_active: boolean
+  youtube_url: string | null
+  youtube_id: string | null
+  youtube_label: string | null
+  youtube_is_active: boolean
+  notes: string | null
+  is_active: boolean
+  updated_at: string
 }
 
 // ── Helpers ───────────────────────────────────────────────────
@@ -434,6 +480,88 @@ export default function DashboardHome() {
   const [stockLoading, setStockLoading] = useState(false)
 
   // ═══════════════════════════════════════════════════════════
+  // EMAIL ACCESS STATE
+  // ═══════════════════════════════════════════════════════════
+
+  const [emailAccessList, setEmailAccessList] = useState<EmailAccessRow[]>([])
+  const [emailAccessStats, setEmailAccessStats] = useState<EmailAccessStats | null>(null)
+  const [emailAccessLoading, setEmailAccessLoading] = useState(false)
+  const [emailAccessTotal, setEmailAccessTotal] = useState(0)
+
+  // Filters
+  const [emailAccessSearch, setEmailAccessSearch] = useState("")
+  const [emailAccessShowFilter, setEmailAccessShowFilter] = useState("")
+  const [emailAccessActiveFilter, setEmailAccessActiveFilter] = useState("")
+
+  // Grant single
+  const [grantForm, setGrantForm] = useState({
+    email: "", show_id: "", label: "", valid_from: "", valid_until: "",
+    max_uses: "", notes: "",
+  })
+  const [grantMsg, setGrantMsg] = useState("")
+  const [grantLoading, setGrantLoading] = useState(false)
+
+  // Grant bulk
+  const [bulkEmails, setBulkEmails] = useState("")
+  const [bulkForm, setBulkForm] = useState({
+    show_id: "", label: "", valid_from: "", valid_until: "", max_uses: "", notes: "",
+  })
+  const [bulkMsg, setBulkMsg] = useState("")
+  const [bulkLoading, setBulkLoading] = useState(false)
+
+  // Edit access modal
+  const [editAccess, setEditAccess] = useState<EmailAccessRow | null>(null)
+  const [editAccessForm, setEditAccessForm] = useState({
+    label: "", valid_until: "", max_uses: "", notes: "", is_active: true,
+  })
+  const [editAccessMsg, setEditAccessMsg] = useState("")
+  const [editAccessLoading, setEditAccessLoading] = useState(false)
+
+  // Revoke by email modal
+  const [revokeByEmail, setRevokeByEmail] = useState("")
+  const [revokeByEmailReason, setRevokeByEmailReason] = useState("")
+  const [revokeByEmailMsg, setRevokeByEmailMsg] = useState("")
+  const [revokeByEmailLoading, setRevokeByEmailLoading] = useState(false)
+
+  // Check access
+  const [checkEmail, setCheckEmail] = useState("")
+  const [checkShowId, setCheckShowId] = useState("")
+  const [checkResult, setCheckResult] = useState<any>(null)
+  const [checkLoading, setCheckLoading] = useState(false)
+
+  // Email access tab
+  const [emailAccessTab, setEmailAccessTab] = useState("list")
+
+  // ═══════════════════════════════════════════════════════════
+  // STREAM CONTROL STATE
+  // ═══════════════════════════════════════════════════════════
+
+  const [streamSources, setStreamSources] = useState<StreamSource[]>([])
+  const [streamLoading, setStreamLoading] = useState(false)
+  const [streamTab, setStreamTab] = useState("list")
+
+  // Set stream form
+  const [streamForm, setStreamForm] = useState({
+    show_id: "",
+    source_type: "both" as "rtmp" | "youtube" | "both",
+    rtmp_url: "",
+    rtmp_label: "Server RTMP",
+    rtmp_is_active: true,
+    youtube_url: "",
+    youtube_label: "YouTube",
+    youtube_is_active: true,
+    notes: "",
+    is_active: true,
+  })
+  const [streamFormMsg, setStreamFormMsg] = useState("")
+  const [streamFormLoading, setStreamFormLoading] = useState(false)
+
+  // Edit stream modal
+  const [editStream, setEditStream] = useState<StreamSource | null>(null)
+  const [editStreamMsg, setEditStreamMsg] = useState("")
+  const [editStreamLoading, setEditStreamLoading] = useState(false)
+
+  // ═══════════════════════════════════════════════════════════
   // FETCH FUNCTIONS
   // ═══════════════════════════════════════════════════════════
 
@@ -579,6 +707,38 @@ export default function DashboardHome() {
     setResellerLoading(false)
   }, [isAdmin, resellerFilter])
 
+  // ─ Email Access Fetch ──────────────────────────────────────
+  const fetchEmailAccess = useCallback(async () => {
+    if (!isAdmin) return
+    setEmailAccessLoading(true)
+    try {
+      const params = new URLSearchParams({ apikey: API_KEY, limit: "50" })
+      if (emailAccessSearch) params.set("email", emailAccessSearch)
+      if (emailAccessShowFilter) params.set("show_id", emailAccessShowFilter)
+      if (emailAccessActiveFilter) params.set("is_active", emailAccessActiveFilter)
+      const res = await fetchWithAuth(`${API_BASE}/email-access/admin/list?${params}`)
+      const data = await res.json()
+      if (data.status !== false) {
+        setEmailAccessList(data.data || [])
+        setEmailAccessTotal(data.total || 0)
+        setEmailAccessStats(data.statistics || null)
+      }
+    } catch (_) {}
+    setEmailAccessLoading(false)
+  }, [isAdmin, emailAccessSearch, emailAccessShowFilter, emailAccessActiveFilter])
+
+  // ─ Stream Sources Fetch ────────────────────────────────────
+  const fetchStreamSources = useCallback(async () => {
+    if (!isAdmin) return
+    setStreamLoading(true)
+    try {
+      const res = await fetchWithAuth(`${API_BASE}/stream/admin/list?apikey=${API_KEY}&limit=50`)
+      const data = await res.json()
+      if (data.status !== false) setStreamSources(data.data || [])
+    } catch (_) {}
+    setStreamLoading(false)
+  }, [isAdmin])
+
   // Initial load
   useEffect(() => {
     if (!loading && isAdmin) {
@@ -598,6 +758,8 @@ export default function DashboardHome() {
     if (activeSection === "live-tokens") fetchLiveTokens()
     if (activeSection === "membership-plans") fetchMembershipPlans()
     if (activeSection === "resellers") fetchResellerApps()
+    if (activeSection === "email-access") fetchEmailAccess()
+    if (activeSection === "stream-control") fetchStreamSources()
   }, [activeSection, isAdmin])
 
   useEffect(() => {
@@ -656,15 +818,11 @@ export default function DashboardHome() {
   }
 
   // ─ Activate Membership ───────────────────────────────────
-  // Fix: kirim plan_code dengan trim & lowercase, juga coba match membership_type
   async function handleActivate() {
     if (!activateTarget || !planCode) return
     setActivateLoading(true); setActivateMsg("")
     try {
-      // Cari plan yang cocok dari daftar plans (by plan_code atau membership_type)
       let resolvedPlanCode = planCode.trim().toLowerCase()
-
-      // Jika membershipPlans sudah ada, cari plan_code yang valid
       if (membershipPlans.length > 0) {
         const matched = membershipPlans.find(
           p =>
@@ -673,7 +831,6 @@ export default function DashboardHome() {
         )
         if (matched) resolvedPlanCode = matched.plan_code
       }
-
       const res = await fetchWithAuth(`${API_BASE}/membership/activate?apikey=${API_KEY}`, {
         method: "POST",
         body: JSON.stringify({ user_id: activateTarget.user_id, plan_code: resolvedPlanCode }),
@@ -954,6 +1111,230 @@ export default function DashboardHome() {
   }
 
   // ═══════════════════════════════════════════════════════════
+  // EMAIL ACCESS ACTIONS
+  // ═══════════════════════════════════════════════════════════
+
+  async function handleGrantAccess(e: React.FormEvent) {
+    e.preventDefault()
+    if (!grantForm.email) return
+    setGrantLoading(true); setGrantMsg("")
+    try {
+      const body: any = {
+        email: grantForm.email,
+        label: grantForm.label || grantForm.email,
+      }
+      if (grantForm.show_id) body.show_id = grantForm.show_id
+      if (grantForm.valid_from) body.valid_from = grantForm.valid_from
+      if (grantForm.valid_until) body.valid_until = grantForm.valid_until
+      if (grantForm.max_uses) body.max_uses = Number(grantForm.max_uses)
+      if (grantForm.notes) body.notes = grantForm.notes
+      const res = await fetchWithAuth(`${API_BASE}/email-access/grant?apikey=${API_KEY}`, {
+        method: "POST",
+        body: JSON.stringify(body),
+      })
+      const data = await res.json()
+      setGrantMsg(data.message + (data.is_duplicate_warning ? ` ⚠️ ${data.duplicate_warning_msg}` : ""))
+      if (data.status) {
+        setGrantForm({ email: "", show_id: "", label: "", valid_from: "", valid_until: "", max_uses: "", notes: "" })
+        fetchEmailAccess()
+      }
+    } catch (_) { setGrantMsg("Error") }
+    setGrantLoading(false)
+  }
+
+  async function handleBulkGrant(e: React.FormEvent) {
+    e.preventDefault()
+    const emailList = bulkEmails.split(/[\n,;]/).map(e => e.trim()).filter(Boolean)
+    if (emailList.length === 0) return
+    setBulkLoading(true); setBulkMsg("")
+    try {
+      const body: any = {
+        emails: emailList,
+        label: bulkForm.label || `Bulk Grant ${new Date().toLocaleDateString("id-ID")}`,
+      }
+      if (bulkForm.show_id) body.show_id = bulkForm.show_id
+      if (bulkForm.valid_from) body.valid_from = bulkForm.valid_from
+      if (bulkForm.valid_until) body.valid_until = bulkForm.valid_until
+      if (bulkForm.max_uses) body.max_uses = Number(bulkForm.max_uses)
+      if (bulkForm.notes) body.notes = bulkForm.notes
+      const res = await fetchWithAuth(`${API_BASE}/email-access/grant-bulk?apikey=${API_KEY}`, {
+        method: "POST",
+        body: JSON.stringify(body),
+      })
+      const data = await res.json()
+      setBulkMsg(data.message + (data.summary ? ` (${data.summary.success} berhasil, ${data.summary.failed} gagal dari ${data.summary.total})` : ""))
+      if (data.status) {
+        setBulkEmails("")
+        setBulkForm({ show_id: "", label: "", valid_from: "", valid_until: "", max_uses: "", notes: "" })
+        fetchEmailAccess()
+      }
+    } catch (_) { setBulkMsg("Error") }
+    setBulkLoading(false)
+  }
+
+  async function handleRevokeAccess(id: number, email: string) {
+    const reason = prompt(`Alasan pencabutan akses ${email} (opsional):`)
+    if (reason === null) return
+    try {
+      const res = await fetchWithAuth(`${API_BASE}/email-access/admin/${id}/revoke?apikey=${API_KEY}`, {
+        method: "PUT",
+        body: JSON.stringify({ reason: reason || null }),
+      })
+      const data = await res.json()
+      alert(data.message)
+      fetchEmailAccess()
+    } catch (_) {}
+  }
+
+  async function handleRevokeAllByEmail(e: React.FormEvent) {
+    e.preventDefault()
+    if (!revokeByEmail) return
+    setRevokeByEmailLoading(true); setRevokeByEmailMsg("")
+    try {
+      const body: any = { email: revokeByEmail }
+      if (revokeByEmailReason) body.reason = revokeByEmailReason
+      const res = await fetchWithAuth(`${API_BASE}/email-access/admin/revoke-by-email?apikey=${API_KEY}`, {
+        method: "PUT",
+        body: JSON.stringify(body),
+      })
+      const data = await res.json()
+      setRevokeByEmailMsg(data.message)
+      if (data.status) {
+        setRevokeByEmail(""); setRevokeByEmailReason("")
+        fetchEmailAccess()
+      }
+    } catch (_) { setRevokeByEmailMsg("Error") }
+    setRevokeByEmailLoading(false)
+  }
+
+  async function handleEditAccessSave() {
+    if (!editAccess) return
+    setEditAccessLoading(true); setEditAccessMsg("")
+    try {
+      const body: any = {
+        label: editAccessForm.label,
+        is_active: editAccessForm.is_active,
+      }
+      if (editAccessForm.valid_until) body.valid_until = editAccessForm.valid_until
+      if (editAccessForm.max_uses !== "") body.max_uses = editAccessForm.max_uses === "null" ? null : Number(editAccessForm.max_uses)
+      if (editAccessForm.notes !== "") body.notes = editAccessForm.notes || null
+      const res = await fetchWithAuth(`${API_BASE}/email-access/admin/${editAccess.id}?apikey=${API_KEY}`, {
+        method: "PUT",
+        body: JSON.stringify(body),
+      })
+      const data = await res.json()
+      setEditAccessMsg(data.message)
+      if (data.status) { setEditAccess(null); fetchEmailAccess() }
+    } catch (_) { setEditAccessMsg("Error") }
+    setEditAccessLoading(false)
+  }
+
+  async function handleCheckAccess(e: React.FormEvent) {
+    e.preventDefault()
+    if (!checkEmail) return
+    setCheckLoading(true); setCheckResult(null)
+    try {
+      const params = new URLSearchParams({ email: checkEmail })
+      if (checkShowId) params.set("show_id", checkShowId)
+      const res = await fetchWithAuth(`${API_BASE}/email-access/check?${params}`)
+      const data = await res.json()
+      setCheckResult(data)
+    } catch (_) { setCheckResult({ status: false, message: "Error" }) }
+    setCheckLoading(false)
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // STREAM CONTROL ACTIONS
+  // ═══════════════════════════════════════════════════════════
+
+  async function handleSetStream(e: React.FormEvent) {
+    e.preventDefault()
+    if (!streamForm.show_id) return
+    setStreamFormLoading(true); setStreamFormMsg("")
+    try {
+      const body: any = {
+        show_id: streamForm.show_id,
+        source_type: streamForm.source_type,
+        rtmp_label: streamForm.rtmp_label,
+        rtmp_is_active: streamForm.rtmp_is_active,
+        youtube_label: streamForm.youtube_label,
+        youtube_is_active: streamForm.youtube_is_active,
+        notes: streamForm.notes || null,
+        is_active: streamForm.is_active,
+      }
+      if (streamForm.source_type !== "youtube") body.rtmp_url = streamForm.rtmp_url
+      if (streamForm.source_type !== "rtmp") body.youtube_url = streamForm.youtube_url
+      const res = await fetchWithAuth(`${API_BASE}/stream/admin/set?apikey=${API_KEY}`, {
+        method: "POST",
+        body: JSON.stringify(body),
+      })
+      const data = await res.json()
+      setStreamFormMsg(data.message)
+      if (data.status) {
+        setStreamForm({
+          show_id: "", source_type: "both",
+          rtmp_url: "", rtmp_label: "Server RTMP", rtmp_is_active: true,
+          youtube_url: "", youtube_label: "YouTube", youtube_is_active: true,
+          notes: "", is_active: true,
+        })
+        fetchStreamSources()
+      }
+    } catch (_) { setStreamFormMsg("Error") }
+    setStreamFormLoading(false)
+  }
+
+  async function handleToggleStream(showId: string, field: string) {
+    try {
+      const res = await fetchWithAuth(`${API_BASE}/stream/admin/${showId}/toggle?apikey=${API_KEY}`, {
+        method: "PUT",
+        body: JSON.stringify({ field }),
+      })
+      const data = await res.json()
+      if (data.status) fetchStreamSources()
+      else alert(data.message)
+    } catch (_) {}
+  }
+
+  async function handleDeleteStream(showId: string) {
+    if (!confirm(`Hapus stream source untuk show ${showId}?`)) return
+    try {
+      const res = await fetchWithAuth(`${API_BASE}/stream/admin/${showId}?apikey=${API_KEY}`, {
+        method: "DELETE",
+      })
+      const data = await res.json()
+      alert(data.message)
+      if (data.status) fetchStreamSources()
+    } catch (_) {}
+  }
+
+  async function handleEditStreamSave() {
+    if (!editStream) return
+    setEditStreamLoading(true); setEditStreamMsg("")
+    try {
+      const body: any = {
+        show_id: editStream.show_id,
+        source_type: editStream.source_type,
+        rtmp_url: editStream.rtmp_url,
+        rtmp_label: editStream.rtmp_label,
+        rtmp_is_active: editStream.rtmp_is_active,
+        youtube_url: editStream.youtube_url,
+        youtube_label: editStream.youtube_label,
+        youtube_is_active: editStream.youtube_is_active,
+        notes: editStream.notes,
+        is_active: editStream.is_active,
+      }
+      const res = await fetchWithAuth(`${API_BASE}/stream/admin/set?apikey=${API_KEY}`, {
+        method: "POST",
+        body: JSON.stringify(body),
+      })
+      const data = await res.json()
+      setEditStreamMsg(data.message)
+      if (data.status) { setEditStream(null); fetchStreamSources() }
+    } catch (_) { setEditStreamMsg("Error") }
+    setEditStreamLoading(false)
+  }
+
+  // ═══════════════════════════════════════════════════════════
   // RENDER: NON-ADMIN / LOADING
   // ═══════════════════════════════════════════════════════════
 
@@ -1030,6 +1411,8 @@ export default function DashboardHome() {
     { key: "qris-products",     label: "Produk QRIS" },
     { key: "ticket-shows",      label: "Harga Show" },
     { key: "live-tokens",       label: "Live Tokens" },
+    { key: "email-access",      label: "Email Access" },
+    { key: "stream-control",    label: "Stream Control" },
     { key: "membership-plans",  label: "Paket Member" },
     { key: "resellers",         label: "Reseller" },
     { key: "broadcast",         label: "Broadcast" },
@@ -1199,7 +1582,6 @@ export default function DashboardHome() {
                           <button
                             onClick={() => {
                               setActivateTarget(u); setPlanCode(""); setActivateMsg("")
-                              // Ensure plans are loaded for resolve
                               if (membershipPlans.length === 0) fetchMembershipPlans()
                             }}
                             className="rounded border px-2 py-1 text-xs hover:bg-green-50 hover:border-green-300 hover:text-green-700 transition-colors"
@@ -1477,7 +1859,6 @@ export default function DashboardHome() {
       {/* ══════════════════════════════════════════════════════ */}
       {activeSection === "qris-products" && (
         <div className="flex flex-col gap-6">
-          {/* Add Product Form */}
           <div className="rounded-xl border p-5">
             <SectionHeader title="Tambah Produk QRIS" sub="Produk membership baru untuk pembelian via QRIS" />
             <form onSubmit={handleAddProduct} className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -1567,7 +1948,6 @@ export default function DashboardHome() {
             </form>
           </div>
 
-          {/* Product List */}
           <div>
             <div className="flex items-center justify-between mb-3">
               <SectionHeader title="Daftar Produk QRIS" sub="Kelola produk membership QRIS" />
@@ -1621,22 +2001,14 @@ export default function DashboardHome() {
                         </td>
                         <td className="px-4 py-2.5">
                           <div className="flex justify-end gap-1 flex-wrap">
-                            <button
-                              onClick={() => { setEditProduct({ ...p }); setEditProductMsg("") }}
-                              className="rounded border px-2 py-1 text-xs hover:bg-blue-50 hover:border-blue-300 hover:text-blue-700 transition-colors"
-                            >Edit</button>
-                            <button
-                              onClick={() => { setStockTarget(p); setStockValue(String(p.current_stock)); setStockMsg("") }}
-                              className="rounded border px-2 py-1 text-xs hover:bg-yellow-50 hover:border-yellow-300 hover:text-yellow-700 transition-colors"
-                            >Stok</button>
-                            <button
-                              onClick={() => handleToggleProduct(p.product_code, "is_active")}
-                              className="rounded border px-2 py-1 text-xs hover:bg-muted/50 transition-colors"
-                            >{p.is_active ? "Nonaktifkan" : "Aktifkan"}</button>
-                            <button
-                              onClick={() => handleToggleProduct(p.product_code, "is_purchase_open")}
-                              className="rounded border px-2 py-1 text-xs hover:bg-muted/50 transition-colors"
-                            >{p.is_purchase_open ? "Tutup Beli" : "Buka Beli"}</button>
+                            <button onClick={() => { setEditProduct({ ...p }); setEditProductMsg("") }}
+                              className="rounded border px-2 py-1 text-xs hover:bg-blue-50 hover:border-blue-300 hover:text-blue-700 transition-colors">Edit</button>
+                            <button onClick={() => { setStockTarget(p); setStockValue(String(p.current_stock)); setStockMsg("") }}
+                              className="rounded border px-2 py-1 text-xs hover:bg-yellow-50 hover:border-yellow-300 hover:text-yellow-700 transition-colors">Stok</button>
+                            <button onClick={() => handleToggleProduct(p.product_code, "is_active")}
+                              className="rounded border px-2 py-1 text-xs hover:bg-muted/50 transition-colors">{p.is_active ? "Nonaktifkan" : "Aktifkan"}</button>
+                            <button onClick={() => handleToggleProduct(p.product_code, "is_purchase_open")}
+                              className="rounded border px-2 py-1 text-xs hover:bg-muted/50 transition-colors">{p.is_purchase_open ? "Tutup Beli" : "Buka Beli"}</button>
                           </div>
                         </td>
                       </tr>
@@ -1654,7 +2026,6 @@ export default function DashboardHome() {
       {/* ══════════════════════════════════════════════════════ */}
       {activeSection === "ticket-shows" && (
         <div className="flex flex-col gap-6">
-          {/* Global Ticket Config */}
           <div className="rounded-xl border p-5">
             <SectionHeader title="Global Config Ticket" sub="Default untuk show yang belum dikonfigurasi manual" />
             {ticketConfig && (
@@ -1700,7 +2071,6 @@ export default function DashboardHome() {
             </form>
           </div>
 
-          {/* Show List */}
           <div>
             <div className="flex items-center justify-between mb-3">
               <SectionHeader title="Daftar Show & Harga Ticket" sub="Set harga per show dari IDN Plus" />
@@ -1782,7 +2152,6 @@ export default function DashboardHome() {
       {/* ══════════════════════════════════════════════════════ */}
       {activeSection === "live-tokens" && (
         <div className="flex flex-col gap-6">
-          {/* Generate Token Form */}
           <div className="rounded-xl border p-5">
             <SectionHeader title="Generate Live Token" sub="Token akses live tanpa login (untuk reseller, giveaway, dll)" />
             <form onSubmit={handleGenerateToken} className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -1826,7 +2195,6 @@ export default function DashboardHome() {
             </form>
           </div>
 
-          {/* Token List */}
           <div>
             <div className="flex items-center justify-between mb-3">
               <SectionHeader title="Daftar Live Token" sub="Semua token akses live" />
@@ -1870,10 +2238,8 @@ export default function DashboardHome() {
                         </td>
                         <td className="px-4 py-2.5 text-right">
                           {t.is_active && new Date(t.expires_at) > new Date() && (
-                            <button
-                              onClick={() => handleDeactivateToken(t.live_id)}
-                              className="rounded border px-2 py-1 text-xs hover:bg-red-50 hover:border-red-300 hover:text-red-700 transition-colors"
-                            >
+                            <button onClick={() => handleDeactivateToken(t.live_id)}
+                              className="rounded border px-2 py-1 text-xs hover:bg-red-50 hover:border-red-300 hover:text-red-700 transition-colors">
                               Nonaktifkan
                             </button>
                           )}
@@ -1889,6 +2255,592 @@ export default function DashboardHome() {
       )}
 
       {/* ══════════════════════════════════════════════════════ */}
+      {/* EMAIL ACCESS */}
+      {/* ══════════════════════════════════════════════════════ */}
+      {activeSection === "email-access" && (
+        <div className="flex flex-col gap-6">
+          {/* Stats */}
+          {emailAccessStats && (
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-6">
+              <StatCard label="Total Akses" value={emailAccessStats.total} />
+              <StatCard label="Aktif" value={emailAccessStats.active} color="text-green-600" />
+              <StatCard label="Bisa Dipakai" value={emailAccessStats.usable} color="text-blue-600" />
+              <StatCard label="Dicabut" value={emailAccessStats.revoked} color="text-red-500" />
+              <StatCard label="Expired" value={emailAccessStats.expired} color="text-gray-500" />
+              <StatCard label="Email Unik" value={emailAccessStats.unique_emails} color="text-purple-600" />
+            </div>
+          )}
+
+          {/* Sub-tabs */}
+          <TabBar
+            tabs={[
+              { key: "list",         label: "Daftar Akses" },
+              { key: "grant",        label: "Grant Akses" },
+              { key: "bulk",         label: "Bulk Grant" },
+              { key: "revoke-email", label: "Cabut by Email" },
+              { key: "check",        label: "Cek Akses" },
+            ]}
+            active={emailAccessTab}
+            onChange={setEmailAccessTab}
+          />
+
+          {/* LIST */}
+          {emailAccessTab === "list" && (
+            <div className="flex flex-col gap-4">
+              <div className="flex gap-2 flex-wrap">
+                <input
+                  className="flex-1 min-w-40 rounded-md border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                  placeholder="Cari email..."
+                  value={emailAccessSearch}
+                  onChange={e => setEmailAccessSearch(e.target.value)}
+                  onKeyDown={e => e.key === "Enter" && fetchEmailAccess()}
+                />
+                <input
+                  className="rounded-md border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring w-36"
+                  placeholder="Show ID (opsional)"
+                  value={emailAccessShowFilter}
+                  onChange={e => setEmailAccessShowFilter(e.target.value)}
+                />
+                <select
+                  className="rounded-md border bg-background px-3 py-1.5 text-sm"
+                  value={emailAccessActiveFilter}
+                  onChange={e => setEmailAccessActiveFilter(e.target.value)}
+                >
+                  <option value="">Semua status</option>
+                  <option value="true">Aktif</option>
+                  <option value="false">Dicabut</option>
+                </select>
+                <button onClick={fetchEmailAccess} className="rounded-md border bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors">
+                  Cari
+                </button>
+              </div>
+
+              {emailAccessLoading ? (
+                <div className="h-32 rounded-xl border bg-muted/30 animate-pulse" />
+              ) : (
+                <div className="overflow-x-auto rounded-xl border">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b bg-muted/30">
+                        <th className="text-left px-4 py-2.5 font-medium text-muted-foreground">Email</th>
+                        <th className="text-left px-4 py-2.5 font-medium text-muted-foreground">Label / Show</th>
+                        <th className="text-left px-4 py-2.5 font-medium text-muted-foreground">Berlaku</th>
+                        <th className="text-left px-4 py-2.5 font-medium text-muted-foreground">Penggunaan</th>
+                        <th className="text-left px-4 py-2.5 font-medium text-muted-foreground">Status</th>
+                        <th className="text-right px-4 py-2.5 font-medium text-muted-foreground">Aksi</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {emailAccessList.length === 0 ? (
+                        <tr><td colSpan={6} className="text-center py-8 text-muted-foreground">Tidak ada data akses</td></tr>
+                      ) : emailAccessList.map(a => (
+                        <tr key={a.id} className="border-b last:border-0 hover:bg-muted/20 transition-colors">
+                          <td className="px-4 py-2.5 font-mono text-xs">{a.email}</td>
+                          <td className="px-4 py-2.5">
+                            <p className="text-xs font-medium">{a.label}</p>
+                            <p className="text-xs text-muted-foreground">{a.show_id ? a.show_id : <span className="italic">Global (semua show)</span>}</p>
+                          </td>
+                          <td className="px-4 py-2.5 text-xs text-muted-foreground">
+                            <p>{a.valid_from ? formatDate(a.valid_from) : "Sekarang"} →</p>
+                            <p>{a.valid_until ? formatDate(a.valid_until) : "Tak terbatas"}</p>
+                          </td>
+                          <td className="px-4 py-2.5 text-xs">
+                            <p>{a.uses_count}/{a.max_uses ?? "∞"}</p>
+                            {a.uses_remaining !== null && (
+                              <p className="text-muted-foreground">{a.uses_remaining} sisa</p>
+                            )}
+                          </td>
+                          <td className="px-4 py-2.5">
+                            {!a.is_active ? (
+                              <span className="inline-flex rounded px-2 py-0.5 text-xs font-medium bg-gray-100 text-gray-500">Dicabut</span>
+                            ) : a.is_expired ? (
+                              <span className="inline-flex rounded px-2 py-0.5 text-xs font-medium bg-red-100 text-red-600">Expired</span>
+                            ) : a.is_maxed ? (
+                              <span className="inline-flex rounded px-2 py-0.5 text-xs font-medium bg-orange-100 text-orange-600">Habis</span>
+                            ) : (
+                              <span className="inline-flex rounded px-2 py-0.5 text-xs font-medium bg-green-100 text-green-700">Aktif</span>
+                            )}
+                          </td>
+                          <td className="px-4 py-2.5">
+                            <div className="flex justify-end gap-1">
+                              <button
+                                onClick={() => {
+                                  setEditAccess(a)
+                                  setEditAccessForm({
+                                    label: a.label,
+                                    valid_until: a.valid_until ? a.valid_until.slice(0, 16) : "",
+                                    max_uses: a.max_uses !== null ? String(a.max_uses) : "",
+                                    notes: a.notes || "",
+                                    is_active: a.is_active,
+                                  })
+                                  setEditAccessMsg("")
+                                }}
+                                className="rounded border px-2 py-1 text-xs hover:bg-blue-50 hover:border-blue-300 hover:text-blue-700 transition-colors"
+                              >Edit</button>
+                              {a.is_active && (
+                                <button
+                                  onClick={() => handleRevokeAccess(a.id, a.email)}
+                                  className="rounded border px-2 py-1 text-xs hover:bg-red-50 hover:border-red-300 hover:text-red-700 transition-colors"
+                                >Cabut</button>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  {emailAccessTotal > 50 && (
+                    <p className="px-4 py-2 text-xs text-muted-foreground border-t">
+                      Menampilkan 50 dari {emailAccessTotal} data. Gunakan filter untuk mempersempit hasil.
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* GRANT SINGLE */}
+          {emailAccessTab === "grant" && (
+            <div className="rounded-xl border p-5 max-w-2xl">
+              <SectionHeader title="Grant Akses ke Satu Email" sub="Berikan akses stream ke email tertentu" />
+              <form onSubmit={handleGrantAccess} className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div className="sm:col-span-2">
+                  <label className="text-xs font-medium text-muted-foreground mb-1 block">Email *</label>
+                  <input type="email" className="w-full rounded-md border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                    placeholder="user@example.com" value={grantForm.email}
+                    onChange={e => setGrantForm(p => ({ ...p, email: e.target.value }))} required />
+                </div>
+                <div>
+                  <label className="text-xs font-medium text-muted-foreground mb-1 block">Show ID (kosong = semua show)</label>
+                  <input className="w-full rounded-md border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                    placeholder="cth: show_abc123" value={grantForm.show_id}
+                    onChange={e => setGrantForm(p => ({ ...p, show_id: e.target.value }))} />
+                </div>
+                <div>
+                  <label className="text-xs font-medium text-muted-foreground mb-1 block">Label</label>
+                  <input className="w-full rounded-md border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                    placeholder="cth: Akses Show Juli 2025" value={grantForm.label}
+                    onChange={e => setGrantForm(p => ({ ...p, label: e.target.value }))} />
+                </div>
+                <div>
+                  <label className="text-xs font-medium text-muted-foreground mb-1 block">Berlaku Dari</label>
+                  <input type="datetime-local" className="w-full rounded-md border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                    value={grantForm.valid_from}
+                    onChange={e => setGrantForm(p => ({ ...p, valid_from: e.target.value }))} />
+                </div>
+                <div>
+                  <label className="text-xs font-medium text-muted-foreground mb-1 block">Berlaku Hingga (kosong = tak terbatas)</label>
+                  <input type="datetime-local" className="w-full rounded-md border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                    value={grantForm.valid_until}
+                    onChange={e => setGrantForm(p => ({ ...p, valid_until: e.target.value }))} />
+                </div>
+                <div>
+                  <label className="text-xs font-medium text-muted-foreground mb-1 block">Max Penggunaan (kosong = tak terbatas)</label>
+                  <input type="number" min={1} className="w-full rounded-md border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                    placeholder="cth: 3" value={grantForm.max_uses}
+                    onChange={e => setGrantForm(p => ({ ...p, max_uses: e.target.value }))} />
+                </div>
+                <div className="sm:col-span-2">
+                  <label className="text-xs font-medium text-muted-foreground mb-1 block">Catatan Internal</label>
+                  <input className="w-full rounded-md border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                    placeholder="Catatan untuk admin..." value={grantForm.notes}
+                    onChange={e => setGrantForm(p => ({ ...p, notes: e.target.value }))} />
+                </div>
+                {grantMsg && (
+                  <p className={`sm:col-span-2 text-xs ${grantMsg.includes("berhasil") ? "text-green-600" : "text-red-500"}`}>{grantMsg}</p>
+                )}
+                <div className="sm:col-span-2">
+                  <button type="submit" disabled={grantLoading}
+                    className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50 transition-colors">
+                    {grantLoading ? "Memberikan Akses..." : "Grant Akses"}
+                  </button>
+                </div>
+              </form>
+            </div>
+          )}
+
+          {/* BULK GRANT */}
+          {emailAccessTab === "bulk" && (
+            <div className="rounded-xl border p-5 max-w-2xl">
+              <SectionHeader title="Bulk Grant Akses" sub="Berikan akses ke banyak email sekaligus (maks. 500)" />
+              <form onSubmit={handleBulkGrant} className="flex flex-col gap-3">
+                <div>
+                  <label className="text-xs font-medium text-muted-foreground mb-1 block">
+                    Daftar Email * <span className="text-muted-foreground font-normal">(pisahkan dengan baris baru, koma, atau titik koma)</span>
+                  </label>
+                  <textarea
+                    className="w-full rounded-md border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring resize-none font-mono"
+                    rows={6}
+                    placeholder={"user1@example.com\nuser2@example.com\nuser3@example.com"}
+                    value={bulkEmails}
+                    onChange={e => setBulkEmails(e.target.value)}
+                    required
+                  />
+                  <p className="text-xs text-muted-foreground mt-1">
+                    {bulkEmails.split(/[\n,;]/).filter(e => e.trim()).length} email terdeteksi
+                  </p>
+                </div>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <div>
+                    <label className="text-xs font-medium text-muted-foreground mb-1 block">Show ID (kosong = semua show)</label>
+                    <input className="w-full rounded-md border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                      placeholder="cth: show_abc123" value={bulkForm.show_id}
+                      onChange={e => setBulkForm(p => ({ ...p, show_id: e.target.value }))} />
+                  </div>
+                  <div>
+                    <label className="text-xs font-medium text-muted-foreground mb-1 block">Label Grup</label>
+                    <input className="w-full rounded-md border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                      placeholder="cth: Batch Show Juli 2025" value={bulkForm.label}
+                      onChange={e => setBulkForm(p => ({ ...p, label: e.target.value }))} />
+                  </div>
+                  <div>
+                    <label className="text-xs font-medium text-muted-foreground mb-1 block">Berlaku Dari</label>
+                    <input type="datetime-local" className="w-full rounded-md border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                      value={bulkForm.valid_from}
+                      onChange={e => setBulkForm(p => ({ ...p, valid_from: e.target.value }))} />
+                  </div>
+                  <div>
+                    <label className="text-xs font-medium text-muted-foreground mb-1 block">Berlaku Hingga</label>
+                    <input type="datetime-local" className="w-full rounded-md border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                      value={bulkForm.valid_until}
+                      onChange={e => setBulkForm(p => ({ ...p, valid_until: e.target.value }))} />
+                  </div>
+                  <div>
+                    <label className="text-xs font-medium text-muted-foreground mb-1 block">Max Penggunaan per Email</label>
+                    <input type="number" min={1} className="w-full rounded-md border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                      placeholder="Kosong = tak terbatas" value={bulkForm.max_uses}
+                      onChange={e => setBulkForm(p => ({ ...p, max_uses: e.target.value }))} />
+                  </div>
+                  <div>
+                    <label className="text-xs font-medium text-muted-foreground mb-1 block">Catatan Internal</label>
+                    <input className="w-full rounded-md border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                      value={bulkForm.notes}
+                      onChange={e => setBulkForm(p => ({ ...p, notes: e.target.value }))} />
+                  </div>
+                </div>
+                {bulkMsg && (
+                  <p className={`text-xs ${bulkMsg.includes("berhasil") ? "text-green-600" : "text-red-500"}`}>{bulkMsg}</p>
+                )}
+                <button type="submit" disabled={bulkLoading || !bulkEmails.trim()}
+                  className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50 transition-colors w-fit">
+                  {bulkLoading ? "Memproses..." : `Grant ke ${bulkEmails.split(/[\n,;]/).filter(e => e.trim()).length} Email`}
+                </button>
+              </form>
+            </div>
+          )}
+
+          {/* REVOKE BY EMAIL */}
+          {emailAccessTab === "revoke-email" && (
+            <div className="rounded-xl border p-5 max-w-lg">
+              <SectionHeader title="Cabut Semua Akses Email" sub="Nonaktifkan seluruh akses aktif dari satu email" />
+              <form onSubmit={handleRevokeAllByEmail} className="flex flex-col gap-3">
+                <div>
+                  <label className="text-xs font-medium text-muted-foreground mb-1 block">Email *</label>
+                  <input type="email" className="w-full rounded-md border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                    placeholder="user@example.com" value={revokeByEmail}
+                    onChange={e => setRevokeByEmail(e.target.value)} required />
+                </div>
+                <div>
+                  <label className="text-xs font-medium text-muted-foreground mb-1 block">Alasan Pencabutan (opsional)</label>
+                  <input className="w-full rounded-md border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                    placeholder="cth: Permintaan user / abuse" value={revokeByEmailReason}
+                    onChange={e => setRevokeByEmailReason(e.target.value)} />
+                </div>
+                {revokeByEmailMsg && (
+                  <p className={`text-xs ${revokeByEmailMsg.includes("berhasil") ? "text-green-600" : "text-red-500"}`}>{revokeByEmailMsg}</p>
+                )}
+                <button type="submit" disabled={revokeByEmailLoading || !revokeByEmail}
+                  className="rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50 transition-colors w-fit">
+                  {revokeByEmailLoading ? "Mencabut..." : "Cabut Semua Akses"}
+                </button>
+              </form>
+            </div>
+          )}
+
+          {/* CHECK ACCESS */}
+          {emailAccessTab === "check" && (
+            <div className="rounded-xl border p-5 max-w-lg">
+              <SectionHeader title="Cek Akses Email" sub="Periksa apakah email memiliki akses aktif" />
+              <form onSubmit={handleCheckAccess} className="flex flex-col gap-3">
+                <div>
+                  <label className="text-xs font-medium text-muted-foreground mb-1 block">Email *</label>
+                  <input type="email" className="w-full rounded-md border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                    placeholder="user@example.com" value={checkEmail}
+                    onChange={e => setCheckEmail(e.target.value)} required />
+                </div>
+                <div>
+                  <label className="text-xs font-medium text-muted-foreground mb-1 block">Show ID (kosong = cek akses global)</label>
+                  <input className="w-full rounded-md border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                    placeholder="cth: show_abc123" value={checkShowId}
+                    onChange={e => setCheckShowId(e.target.value)} />
+                </div>
+                <button type="submit" disabled={checkLoading || !checkEmail}
+                  className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50 transition-colors w-fit">
+                  {checkLoading ? "Mengecek..." : "Cek Akses"}
+                </button>
+                {checkResult && (
+                  <div className={`rounded-lg border p-4 ${checkResult.has_access ? "bg-green-50 border-green-200" : "bg-red-50 border-red-200"}`}>
+                    <div className="flex items-center gap-2 mb-2">
+                      <span className={`text-lg ${checkResult.has_access ? "text-green-600" : "text-red-500"}`}>
+                        {checkResult.has_access ? "✅" : "❌"}
+                      </span>
+                      <p className={`text-sm font-semibold ${checkResult.has_access ? "text-green-700" : "text-red-700"}`}>
+                        {checkResult.has_access ? "Email memiliki akses" : "Tidak ada akses"}
+                      </p>
+                    </div>
+                    {checkResult.reason && (
+                      <p className="text-xs text-muted-foreground mb-2">Alasan: <span className="font-mono">{checkResult.reason}</span></p>
+                    )}
+                    {checkResult.access && (
+                      <div className="grid grid-cols-2 gap-1 text-xs">
+                        <span className="text-muted-foreground">Label:</span>
+                        <span>{checkResult.access.label}</span>
+                        <span className="text-muted-foreground">Berlaku hingga:</span>
+                        <span>{checkResult.access.valid_until ? formatDate(checkResult.access.valid_until) : "Tak terbatas"}</span>
+                        <span className="text-muted-foreground">Sisa penggunaan:</span>
+                        <span>{checkResult.access.uses_remaining ?? "Tak terbatas"}</span>
+                        <span className="text-muted-foreground">Global:</span>
+                        <span>{checkResult.access.is_global ? "Ya" : "Tidak"}</span>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </form>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ══════════════════════════════════════════════════════ */}
+      {/* STREAM CONTROL */}
+      {/* ══════════════════════════════════════════════════════ */}
+      {activeSection === "stream-control" && (
+        <div className="flex flex-col gap-6">
+          {/* Sub-tabs */}
+          <TabBar
+            tabs={[
+              { key: "list", label: "Daftar Stream Source" },
+              { key: "set",  label: "Set Stream Source" },
+            ]}
+            active={streamTab}
+            onChange={setStreamTab}
+          />
+
+          {/* LIST */}
+          {streamTab === "list" && (
+            <div className="flex flex-col gap-4">
+              <div className="flex items-center justify-between">
+                <SectionHeader title="Daftar Stream Source" sub="Stream source yang terkonfigurasi per show" />
+                <button onClick={fetchStreamSources} className="rounded-md border px-3 py-1.5 text-sm hover:bg-muted/50 transition-colors">
+                  Refresh
+                </button>
+              </div>
+              {streamLoading ? (
+                <div className="h-32 rounded-xl border bg-muted/30 animate-pulse" />
+              ) : (
+                <div className="overflow-x-auto rounded-xl border">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b bg-muted/30">
+                        <th className="text-left px-4 py-2.5 font-medium text-muted-foreground">Show ID</th>
+                        <th className="text-left px-4 py-2.5 font-medium text-muted-foreground">Tipe</th>
+                        <th className="text-left px-4 py-2.5 font-medium text-muted-foreground">RTMP</th>
+                        <th className="text-left px-4 py-2.5 font-medium text-muted-foreground">YouTube</th>
+                        <th className="text-left px-4 py-2.5 font-medium text-muted-foreground">Status</th>
+                        <th className="text-left px-4 py-2.5 font-medium text-muted-foreground">Diperbarui</th>
+                        <th className="text-right px-4 py-2.5 font-medium text-muted-foreground">Aksi</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {streamSources.length === 0 ? (
+                        <tr><td colSpan={7} className="text-center py-8 text-muted-foreground">Belum ada stream source</td></tr>
+                      ) : streamSources.map(s => (
+                        <tr key={s.id} className="border-b last:border-0 hover:bg-muted/20 transition-colors">
+                          <td className="px-4 py-2.5 font-mono text-xs font-medium">{s.show_id}</td>
+                          <td className="px-4 py-2.5">
+                            <span className={`inline-flex rounded px-2 py-0.5 text-xs font-medium ${
+                              s.source_type === "both" ? "bg-purple-100 text-purple-700" :
+                              s.source_type === "rtmp" ? "bg-orange-100 text-orange-700" :
+                              "bg-red-100 text-red-700"
+                            }`}>{s.source_type.toUpperCase()}</span>
+                          </td>
+                          <td className="px-4 py-2.5 text-xs">
+                            {s.rtmp_url ? (
+                              <>
+                                <p className="font-medium truncate max-w-[140px]" title={s.rtmp_url}>{s.rtmp_label || "Server RTMP"}</p>
+                                <span className={`inline-flex rounded px-1.5 py-0.5 text-xs ${s.rtmp_is_active ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-500"}`}>
+                                  {s.rtmp_is_active ? "Aktif" : "Nonaktif"}
+                                </span>
+                              </>
+                            ) : <span className="text-muted-foreground">—</span>}
+                          </td>
+                          <td className="px-4 py-2.5 text-xs">
+                            {s.youtube_url ? (
+                              <>
+                                <p className="font-medium">{s.youtube_label || "YouTube"}</p>
+                                {s.youtube_id && (
+                                  <a href={`https://youtu.be/${s.youtube_id}`} target="_blank" rel="noopener noreferrer"
+                                    className="font-mono text-blue-600 hover:underline">{s.youtube_id}</a>
+                                )}
+                                <span className={`ml-1 inline-flex rounded px-1.5 py-0.5 text-xs ${s.youtube_is_active ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-500"}`}>
+                                  {s.youtube_is_active ? "Aktif" : "Nonaktif"}
+                                </span>
+                              </>
+                            ) : <span className="text-muted-foreground">—</span>}
+                          </td>
+                          <td className="px-4 py-2.5">
+                            <span className={`inline-flex rounded px-2 py-0.5 text-xs font-medium ${s.is_active ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-500"}`}>
+                              {s.is_active ? "Aktif" : "Nonaktif"}
+                            </span>
+                          </td>
+                          <td className="px-4 py-2.5 text-xs text-muted-foreground">{formatDateTime(s.updated_at)}</td>
+                          <td className="px-4 py-2.5">
+                            <div className="flex justify-end gap-1 flex-wrap">
+                              <button
+                                onClick={() => { setEditStream({ ...s }); setEditStreamMsg("") }}
+                                className="rounded border px-2 py-1 text-xs hover:bg-blue-50 hover:border-blue-300 hover:text-blue-700 transition-colors"
+                              >Edit</button>
+                              <button
+                                onClick={() => handleToggleStream(s.show_id, "is_active")}
+                                className="rounded border px-2 py-1 text-xs hover:bg-muted/50 transition-colors"
+                              >{s.is_active ? "Nonaktifkan" : "Aktifkan"}</button>
+                              {s.rtmp_url && (
+                                <button
+                                  onClick={() => handleToggleStream(s.show_id, "rtmp_is_active")}
+                                  className="rounded border px-2 py-1 text-xs hover:bg-orange-50 hover:border-orange-300 hover:text-orange-700 transition-colors"
+                                >RTMP {s.rtmp_is_active ? "Off" : "On"}</button>
+                              )}
+                              {s.youtube_url && (
+                                <button
+                                  onClick={() => handleToggleStream(s.show_id, "youtube_is_active")}
+                                  className="rounded border px-2 py-1 text-xs hover:bg-red-50 hover:border-red-300 hover:text-red-700 transition-colors"
+                                >YT {s.youtube_is_active ? "Off" : "On"}</button>
+                              )}
+                              <button
+                                onClick={() => handleDeleteStream(s.show_id)}
+                                className="rounded border px-2 py-1 text-xs hover:bg-red-50 hover:border-red-300 hover:text-red-700 transition-colors"
+                              >Hapus</button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* SET STREAM */}
+          {streamTab === "set" && (
+            <div className="rounded-xl border p-5 max-w-2xl">
+              <SectionHeader title="Set Stream Source" sub="Buat atau timpa stream source untuk show tertentu" />
+              <form onSubmit={handleSetStream} className="flex flex-col gap-3">
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <div>
+                    <label className="text-xs font-medium text-muted-foreground mb-1 block">Show ID *</label>
+                    <input className="w-full rounded-md border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                      placeholder="cth: show_abc123" value={streamForm.show_id}
+                      onChange={e => setStreamForm(p => ({ ...p, show_id: e.target.value }))} required />
+                  </div>
+                  <div>
+                    <label className="text-xs font-medium text-muted-foreground mb-1 block">Tipe Source *</label>
+                    <select className="w-full rounded-md border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                      value={streamForm.source_type}
+                      onChange={e => setStreamForm(p => ({ ...p, source_type: e.target.value as any }))}>
+                      <option value="both">Both (RTMP + YouTube)</option>
+                      <option value="rtmp">RTMP saja</option>
+                      <option value="youtube">YouTube saja</option>
+                    </select>
+                  </div>
+                </div>
+
+                {/* RTMP Fields */}
+                {(streamForm.source_type === "rtmp" || streamForm.source_type === "both") && (
+                  <div className="rounded-lg border bg-orange-50/50 p-4 flex flex-col gap-3">
+                    <p className="text-xs font-semibold text-orange-700 uppercase tracking-wide">RTMP</p>
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                      <div className="sm:col-span-2">
+                        <label className="text-xs font-medium text-muted-foreground mb-1 block">RTMP URL *</label>
+                        <input className="w-full rounded-md border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring font-mono"
+                          placeholder="rtmp://server.example.com/live/stream_key" value={streamForm.rtmp_url}
+                          onChange={e => setStreamForm(p => ({ ...p, rtmp_url: e.target.value }))} />
+                      </div>
+                      <div>
+                        <label className="text-xs font-medium text-muted-foreground mb-1 block">Label RTMP</label>
+                        <input className="w-full rounded-md border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                          value={streamForm.rtmp_label}
+                          onChange={e => setStreamForm(p => ({ ...p, rtmp_label: e.target.value }))} />
+                      </div>
+                      <div className="flex items-center gap-2 pt-5">
+                        <label className="flex items-center gap-2 text-sm cursor-pointer">
+                          <input type="checkbox" className="rounded" checked={streamForm.rtmp_is_active}
+                            onChange={e => setStreamForm(p => ({ ...p, rtmp_is_active: e.target.checked }))} />
+                          RTMP Aktif
+                        </label>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* YouTube Fields */}
+                {(streamForm.source_type === "youtube" || streamForm.source_type === "both") && (
+                  <div className="rounded-lg border bg-red-50/50 p-4 flex flex-col gap-3">
+                    <p className="text-xs font-semibold text-red-700 uppercase tracking-wide">YouTube</p>
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                      <div className="sm:col-span-2">
+                        <label className="text-xs font-medium text-muted-foreground mb-1 block">YouTube URL *</label>
+                        <input className="w-full rounded-md border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                          placeholder="https://www.youtube.com/watch?v=xxxxx" value={streamForm.youtube_url}
+                          onChange={e => setStreamForm(p => ({ ...p, youtube_url: e.target.value }))} />
+                        <p className="text-xs text-muted-foreground mt-1">Video ID akan diekstrak otomatis dari URL.</p>
+                      </div>
+                      <div>
+                        <label className="text-xs font-medium text-muted-foreground mb-1 block">Label YouTube</label>
+                        <input className="w-full rounded-md border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                          value={streamForm.youtube_label}
+                          onChange={e => setStreamForm(p => ({ ...p, youtube_label: e.target.value }))} />
+                      </div>
+                      <div className="flex items-center gap-2 pt-5">
+                        <label className="flex items-center gap-2 text-sm cursor-pointer">
+                          <input type="checkbox" className="rounded" checked={streamForm.youtube_is_active}
+                            onChange={e => setStreamForm(p => ({ ...p, youtube_is_active: e.target.checked }))} />
+                          YouTube Aktif
+                        </label>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                <div>
+                  <label className="text-xs font-medium text-muted-foreground mb-1 block">Catatan (opsional)</label>
+                  <input className="w-full rounded-md border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                    placeholder="Catatan internal..." value={streamForm.notes}
+                    onChange={e => setStreamForm(p => ({ ...p, notes: e.target.value }))} />
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <label className="flex items-center gap-2 text-sm cursor-pointer">
+                    <input type="checkbox" className="rounded" checked={streamForm.is_active}
+                      onChange={e => setStreamForm(p => ({ ...p, is_active: e.target.checked }))} />
+                    Stream Source Aktif
+                  </label>
+                </div>
+
+                {streamFormMsg && (
+                  <p className={`text-xs ${streamFormMsg.includes("berhasil") ? "text-green-600" : "text-red-500"}`}>{streamFormMsg}</p>
+                )}
+                <button type="submit" disabled={streamFormLoading || !streamForm.show_id}
+                  className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50 transition-colors w-fit">
+                  {streamFormLoading ? "Menyimpan..." : "Simpan Stream Source"}
+                </button>
+              </form>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ══════════════════════════════════════════════════════ */}
       {/* MEMBERSHIP PLANS */}
       {/* ══════════════════════════════════════════════════════ */}
       {activeSection === "membership-plans" && (
@@ -1899,7 +2851,7 @@ export default function DashboardHome() {
           </div>
           <div className="rounded-xl border p-4 bg-yellow-50 border-yellow-200">
             <p className="text-xs text-yellow-800">
-              <strong>Catatan:</strong> Saat aktivasi membership manual, gunakan <code className="bg-yellow-100 px-1 rounded">plan_code</code> persis seperti di kolom Plan Code di bawah. Aktivasi manual mendukung pencocokan by <code className="bg-yellow-100 px-1 rounded">plan_code</code> maupun <code className="bg-yellow-100 px-1 rounded">membership_type</code>.
+              <strong>Catatan:</strong> Saat aktivasi membership manual, gunakan <code className="bg-yellow-100 px-1 rounded">plan_code</code> persis seperti di kolom Plan Code di bawah.
             </p>
           </div>
           {plansLoading ? (
@@ -2019,15 +2971,11 @@ export default function DashboardHome() {
                             <button
                               onClick={() => { setApproveTarget(a); setApproveCommission("10"); setApproveNotes(""); setApproveMsg("") }}
                               className="rounded border px-2 py-1 text-xs hover:bg-green-50 hover:border-green-300 hover:text-green-700 transition-colors"
-                            >
-                              Approve
-                            </button>
+                            >Approve</button>
                             <button
                               onClick={() => handleRejectReseller(a)}
                               className="rounded border px-2 py-1 text-xs hover:bg-red-50 hover:border-red-300 hover:text-red-700 transition-colors"
-                            >
-                              Reject
-                            </button>
+                            >Reject</button>
                           </div>
                         )}
                       </td>
@@ -2050,33 +2998,22 @@ export default function DashboardHome() {
             <form onSubmit={handleBroadcast} className="flex flex-col gap-3">
               <div>
                 <label className="text-xs font-medium text-muted-foreground mb-1 block">Judul *</label>
-                <input
-                  className="w-full rounded-md border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-                  placeholder="Judul notifikasi"
-                  value={broadcast.title}
-                  onChange={e => setBroadcast(p => ({ ...p, title: e.target.value }))}
-                  required
-                />
+                <input className="w-full rounded-md border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                  placeholder="Judul notifikasi" value={broadcast.title}
+                  onChange={e => setBroadcast(p => ({ ...p, title: e.target.value }))} required />
               </div>
               <div>
                 <label className="text-xs font-medium text-muted-foreground mb-1 block">Pesan *</label>
-                <textarea
-                  className="w-full rounded-md border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring resize-none"
-                  rows={4}
-                  placeholder="Isi pesan notifikasi..."
-                  value={broadcast.message}
-                  onChange={e => setBroadcast(p => ({ ...p, message: e.target.value }))}
-                  required
-                />
+                <textarea className="w-full rounded-md border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring resize-none"
+                  rows={4} placeholder="Isi pesan notifikasi..." value={broadcast.message}
+                  onChange={e => setBroadcast(p => ({ ...p, message: e.target.value }))} required />
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="text-xs font-medium text-muted-foreground mb-1 block">Tipe</label>
-                  <select
-                    className="w-full rounded-md border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                  <select className="w-full rounded-md border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
                     value={broadcast.type}
-                    onChange={e => setBroadcast(p => ({ ...p, type: e.target.value as any }))}
-                  >
+                    onChange={e => setBroadcast(p => ({ ...p, type: e.target.value as any }))}>
                     <option value="info">Info</option>
                     <option value="success">Success</option>
                     <option value="warning">Warning</option>
@@ -2085,11 +3022,9 @@ export default function DashboardHome() {
                 </div>
                 <div>
                   <label className="text-xs font-medium text-muted-foreground mb-1 block">Target Role</label>
-                  <select
-                    className="w-full rounded-md border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                  <select className="w-full rounded-md border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
                     value={broadcast.target_role}
-                    onChange={e => setBroadcast(p => ({ ...p, target_role: e.target.value }))}
-                  >
+                    onChange={e => setBroadcast(p => ({ ...p, target_role: e.target.value }))}>
                     <option value="">Semua user</option>
                     <option value="member">Member</option>
                     <option value="reseller">Reseller</option>
@@ -2099,11 +3034,9 @@ export default function DashboardHome() {
               </div>
               <div>
                 <label className="text-xs font-medium text-muted-foreground mb-1 block">Kategori</label>
-                <select
-                  className="w-full rounded-md border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                <select className="w-full rounded-md border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
                   value={broadcast.category}
-                  onChange={e => setBroadcast(p => ({ ...p, category: e.target.value }))}
-                >
+                  onChange={e => setBroadcast(p => ({ ...p, category: e.target.value }))}>
                   <option value="system">System</option>
                   <option value="payment">Payment</option>
                   <option value="membership">Membership</option>
@@ -2113,21 +3046,15 @@ export default function DashboardHome() {
               </div>
               <div>
                 <label className="text-xs font-medium text-muted-foreground mb-1 block">Action URL (opsional)</label>
-                <input
-                  className="w-full rounded-md border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-                  placeholder="cth: /membership atau /live"
-                  value={broadcast.action_url}
-                  onChange={e => setBroadcast(p => ({ ...p, action_url: e.target.value }))}
-                />
+                <input className="w-full rounded-md border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                  placeholder="cth: /membership atau /live" value={broadcast.action_url}
+                  onChange={e => setBroadcast(p => ({ ...p, action_url: e.target.value }))} />
               </div>
               {broadcastMsg && (
                 <p className={`text-xs ${broadcastMsg.toLowerCase().includes("gagal") ? "text-red-500" : "text-green-600"}`}>{broadcastMsg}</p>
               )}
-              <button
-                type="submit"
-                disabled={broadcastLoading}
-                className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50 transition-colors"
-              >
+              <button type="submit" disabled={broadcastLoading}
+                className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50 transition-colors">
                 {broadcastLoading ? "Mengirim..." : "Kirim Broadcast"}
               </button>
             </form>
@@ -2148,21 +3075,14 @@ export default function DashboardHome() {
             <div className="flex flex-col gap-3">
               <div>
                 <label className="text-xs font-medium text-muted-foreground mb-1 block">Alasan ban *</label>
-                <input
-                  className="w-full rounded-md border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-                  placeholder="Misal: Spam, pelanggaran TOS..."
-                  value={banReason}
-                  onChange={e => setBanReason(e.target.value)}
-                />
+                <input className="w-full rounded-md border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                  placeholder="Misal: Spam, pelanggaran TOS..." value={banReason}
+                  onChange={e => setBanReason(e.target.value)} />
               </div>
               <div>
                 <label className="text-xs font-medium text-muted-foreground mb-1 block">Ban hingga (kosongkan = permanen)</label>
-                <input
-                  type="datetime-local"
-                  className="w-full rounded-md border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-                  value={banUntil}
-                  onChange={e => setBanUntil(e.target.value)}
-                />
+                <input type="datetime-local" className="w-full rounded-md border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                  value={banUntil} onChange={e => setBanUntil(e.target.value)} />
               </div>
               {banMsg && <p className="text-xs text-red-500">{banMsg}</p>}
               <div className="flex gap-2 mt-1">
@@ -2171,9 +3091,7 @@ export default function DashboardHome() {
                   {banLoading ? "Memproses..." : "Ban User"}
                 </button>
                 <button onClick={() => { setBanTarget(null); setBanMsg("") }}
-                  className="flex-1 rounded-md border px-4 py-2 text-sm hover:bg-muted/50 transition-colors">
-                  Batal
-                </button>
+                  className="flex-1 rounded-md border px-4 py-2 text-sm hover:bg-muted/50 transition-colors">Batal</button>
               </div>
             </div>
           </div>
@@ -2187,11 +3105,8 @@ export default function DashboardHome() {
             <h3 className="font-semibold mb-1">Ubah Role</h3>
             <p className="text-sm text-muted-foreground mb-4">@{roleTarget.username} · saat ini: <span className="capitalize font-medium">{roleTarget.role}</span></p>
             <div className="flex flex-col gap-3">
-              <select
-                className="w-full rounded-md border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-                value={newRole}
-                onChange={e => setNewRole(e.target.value)}
-              >
+              <select className="w-full rounded-md border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                value={newRole} onChange={e => setNewRole(e.target.value)}>
                 <option value="member">Member</option>
                 <option value="reseller">Reseller</option>
                 <option value="admin">Admin</option>
@@ -2204,16 +3119,14 @@ export default function DashboardHome() {
                   {roleLoading ? "Memproses..." : "Simpan"}
                 </button>
                 <button onClick={() => { setRoleTarget(null); setRoleMsg("") }}
-                  className="flex-1 rounded-md border px-4 py-2 text-sm hover:bg-muted/50 transition-colors">
-                  Batal
-                </button>
+                  className="flex-1 rounded-md border px-4 py-2 text-sm hover:bg-muted/50 transition-colors">Batal</button>
               </div>
             </div>
           </div>
         </div>
       )}
 
-      {/* Modal: Activate Membership — FIXED */}
+      {/* Modal: Activate Membership */}
       {activateTarget && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
           <div className="w-full max-w-sm rounded-2xl border bg-background p-6 shadow-xl mx-4">
@@ -2225,11 +3138,8 @@ export default function DashboardHome() {
               <div>
                 <label className="text-xs font-medium text-muted-foreground mb-1 block">Plan Code *</label>
                 {membershipPlans.length > 0 ? (
-                  <select
-                    className="w-full rounded-md border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-                    value={planCode}
-                    onChange={e => setPlanCode(e.target.value)}
-                  >
+                  <select className="w-full rounded-md border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                    value={planCode} onChange={e => setPlanCode(e.target.value)}>
                     <option value="">-- Pilih Paket --</option>
                     {membershipPlans.filter(p => p.is_active).map(p => (
                       <option key={p.id} value={p.plan_code}>
@@ -2239,29 +3149,16 @@ export default function DashboardHome() {
                   </select>
                 ) : (
                   <div className="flex gap-2">
-                    <input
-                      className="flex-1 rounded-md border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-                      placeholder="monthly / weekly / yearly / vip"
-                      value={planCode}
-                      onChange={e => setPlanCode(e.target.value)}
-                    />
-                    <button
-                      type="button"
-                      onClick={fetchMembershipPlans}
-                      className="rounded-md border px-3 py-1.5 text-xs hover:bg-muted/50 transition-colors"
-                    >
-                      Load Plans
-                    </button>
+                    <input className="flex-1 rounded-md border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                      placeholder="monthly / weekly / yearly / vip" value={planCode}
+                      onChange={e => setPlanCode(e.target.value)} />
+                    <button type="button" onClick={fetchMembershipPlans}
+                      className="rounded-md border px-3 py-1.5 text-xs hover:bg-muted/50 transition-colors">Load Plans</button>
                   </div>
                 )}
-                <p className="text-xs text-muted-foreground mt-1">
-                  Masukkan plan_code dari tabel Paket Member.
-                </p>
               </div>
               {activateMsg && (
-                <p className={`text-xs ${activateMsg.toLowerCase().includes("berhasil") ? "text-green-600" : "text-red-500"}`}>
-                  {activateMsg}
-                </p>
+                <p className={`text-xs ${activateMsg.toLowerCase().includes("berhasil") ? "text-green-600" : "text-red-500"}`}>{activateMsg}</p>
               )}
               <div className="flex gap-2">
                 <button onClick={handleActivate} disabled={activateLoading || !planCode}
@@ -2269,9 +3166,7 @@ export default function DashboardHome() {
                   {activateLoading ? "Memproses..." : "Aktifkan"}
                 </button>
                 <button onClick={() => { setActivateTarget(null); setActivateMsg("") }}
-                  className="flex-1 rounded-md border px-4 py-2 text-sm hover:bg-muted/50 transition-colors">
-                  Batal
-                </button>
+                  className="flex-1 rounded-md border px-4 py-2 text-sm hover:bg-muted/50 transition-colors">Batal</button>
               </div>
             </div>
           </div>
@@ -2283,17 +3178,12 @@ export default function DashboardHome() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
           <div className="w-full max-w-sm rounded-2xl border bg-background p-6 shadow-xl mx-4">
             <h3 className="font-semibold mb-1">Update Status Order</h3>
-            <p className="text-sm text-muted-foreground mb-4">
-              {updateOrderTarget.order_id} · {updateOrderTarget.plan_name}
-            </p>
+            <p className="text-sm text-muted-foreground mb-4">{updateOrderTarget.order_id} · {updateOrderTarget.plan_name}</p>
             <div className="flex flex-col gap-3">
               <div>
                 <label className="text-xs font-medium text-muted-foreground mb-1 block">Status Baru *</label>
-                <select
-                  className="w-full rounded-md border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-                  value={updateOrderStatus}
-                  onChange={e => setUpdateOrderStatus(e.target.value)}
-                >
+                <select className="w-full rounded-md border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                  value={updateOrderStatus} onChange={e => setUpdateOrderStatus(e.target.value)}>
                   <option value="paid">Paid (Konfirmasi)</option>
                   <option value="failed">Failed</option>
                   <option value="cancelled">Cancelled</option>
@@ -2302,12 +3192,9 @@ export default function DashboardHome() {
               </div>
               <div>
                 <label className="text-xs font-medium text-muted-foreground mb-1 block">Catatan Admin</label>
-                <input
-                  className="w-full rounded-md border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-                  placeholder="Catatan opsional..."
-                  value={updateOrderNotes}
-                  onChange={e => setUpdateOrderNotes(e.target.value)}
-                />
+                <input className="w-full rounded-md border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                  placeholder="Catatan opsional..." value={updateOrderNotes}
+                  onChange={e => setUpdateOrderNotes(e.target.value)} />
               </div>
               {updateOrderMsg && <p className="text-xs text-muted-foreground">{updateOrderMsg}</p>}
               <div className="flex gap-2">
@@ -2316,9 +3203,7 @@ export default function DashboardHome() {
                   {updateOrderLoading ? "Memproses..." : "Update"}
                 </button>
                 <button onClick={() => { setUpdateOrderTarget(null); setUpdateOrderMsg("") }}
-                  className="flex-1 rounded-md border px-4 py-2 text-sm hover:bg-muted/50 transition-colors">
-                  Batal
-                </button>
+                  className="flex-1 rounded-md border px-4 py-2 text-sm hover:bg-muted/50 transition-colors">Batal</button>
               </div>
             </div>
           </div>
@@ -2346,7 +3231,7 @@ export default function DashboardHome() {
                     onChange={e => setEditProduct(p => p ? { ...p, price: e.target.value } : p)} />
                 </div>
                 <div>
-                  <label className="text-xs font-medium text-muted-foreground mb-1 block">Harga Sale (kosongkan = hapus)</label>
+                  <label className="text-xs font-medium text-muted-foreground mb-1 block">Harga Sale</label>
                   <input type="number" className="w-full rounded-md border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
                     value={editProduct.price_sale ?? ""}
                     onChange={e => setEditProduct(p => p ? { ...p, price_sale: e.target.value || null } : p)} />
@@ -2373,18 +3258,15 @@ export default function DashboardHome() {
               <div className="flex gap-4 flex-wrap">
                 <label className="flex items-center gap-2 text-sm cursor-pointer">
                   <input type="checkbox" className="rounded" checked={editProduct.is_active}
-                    onChange={e => setEditProduct(p => p ? { ...p, is_active: e.target.checked } : p)} />
-                  Aktif
+                    onChange={e => setEditProduct(p => p ? { ...p, is_active: e.target.checked } : p)} />Aktif
                 </label>
                 <label className="flex items-center gap-2 text-sm cursor-pointer">
                   <input type="checkbox" className="rounded" checked={editProduct.is_purchase_open}
-                    onChange={e => setEditProduct(p => p ? { ...p, is_purchase_open: e.target.checked } : p)} />
-                  Pembelian Terbuka
+                    onChange={e => setEditProduct(p => p ? { ...p, is_purchase_open: e.target.checked } : p)} />Pembelian Terbuka
                 </label>
                 <label className="flex items-center gap-2 text-sm cursor-pointer">
                   <input type="checkbox" className="rounded" checked={editProduct.is_popular}
-                    onChange={e => setEditProduct(p => p ? { ...p, is_popular: e.target.checked } : p)} />
-                  Populer
+                    onChange={e => setEditProduct(p => p ? { ...p, is_popular: e.target.checked } : p)} />Populer
                 </label>
               </div>
               {editProductMsg && <p className={`text-xs ${editProductMsg.includes("berhasil") ? "text-green-600" : "text-red-500"}`}>{editProductMsg}</p>}
@@ -2394,9 +3276,7 @@ export default function DashboardHome() {
                   {editProductLoading ? "Menyimpan..." : "Simpan"}
                 </button>
                 <button onClick={() => { setEditProduct(null); setEditProductMsg("") }}
-                  className="flex-1 rounded-md border px-4 py-2 text-sm hover:bg-muted/50 transition-colors">
-                  Batal
-                </button>
+                  className="flex-1 rounded-md border px-4 py-2 text-sm hover:bg-muted/50 transition-colors">Batal</button>
               </div>
             </div>
           </div>
@@ -2414,8 +3294,7 @@ export default function DashboardHome() {
                 <label className="text-xs font-medium text-muted-foreground mb-1 block">Total Stok Bulan Ini</label>
                 <input type="number" min={stockTarget.sold_count}
                   className="w-full rounded-md border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-                  value={stockValue}
-                  onChange={e => setStockValue(e.target.value)} />
+                  value={stockValue} onChange={e => setStockValue(e.target.value)} />
                 <p className="text-xs text-muted-foreground mt-1">Minimal {stockTarget.sold_count} (sudah terjual)</p>
               </div>
               {stockMsg && <p className={`text-xs ${stockMsg.includes("berhasil") ? "text-green-600" : "text-red-500"}`}>{stockMsg}</p>}
@@ -2425,9 +3304,7 @@ export default function DashboardHome() {
                   {stockLoading ? "Menyimpan..." : "Update Stok"}
                 </button>
                 <button onClick={() => { setStockTarget(null); setStockMsg("") }}
-                  className="flex-1 rounded-md border px-4 py-2 text-sm hover:bg-muted/50 transition-colors">
-                  Batal
-                </button>
+                  className="flex-1 rounded-md border px-4 py-2 text-sm hover:bg-muted/50 transition-colors">Batal</button>
               </div>
             </div>
           </div>
@@ -2445,44 +3322,37 @@ export default function DashboardHome() {
                 <div>
                   <label className="text-xs font-medium text-muted-foreground mb-1 block">Harga Normal (Rp) *</label>
                   <input type="number" className="w-full rounded-md border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-                    value={priceForm.price}
-                    onChange={e => setPriceForm(p => ({ ...p, price: e.target.value }))} required />
+                    value={priceForm.price} onChange={e => setPriceForm(p => ({ ...p, price: e.target.value }))} required />
                 </div>
                 <div>
                   <label className="text-xs font-medium text-muted-foreground mb-1 block">Harga Sale (opsional)</label>
                   <input type="number" className="w-full rounded-md border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-                    value={priceForm.price_sale}
-                    onChange={e => setPriceForm(p => ({ ...p, price_sale: e.target.value }))} />
+                    value={priceForm.price_sale} onChange={e => setPriceForm(p => ({ ...p, price_sale: e.target.value }))} />
                 </div>
                 <div>
                   <label className="text-xs font-medium text-muted-foreground mb-1 block">Max Stock</label>
                   <input type="number" className="w-full rounded-md border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-                    value={priceForm.max_stock}
-                    onChange={e => setPriceForm(p => ({ ...p, max_stock: e.target.value }))} />
+                    value={priceForm.max_stock} onChange={e => setPriceForm(p => ({ ...p, max_stock: e.target.value }))} />
                 </div>
                 <div>
                   <label className="text-xs font-medium text-muted-foreground mb-1 block">Token Max Uses</label>
                   <input type="number" min={1} className="w-full rounded-md border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-                    value={priceForm.token_max_uses}
-                    onChange={e => setPriceForm(p => ({ ...p, token_max_uses: Number(e.target.value) }))} />
+                    value={priceForm.token_max_uses} onChange={e => setPriceForm(p => ({ ...p, token_max_uses: Number(e.target.value) }))} />
                 </div>
                 <div>
                   <label className="text-xs font-medium text-muted-foreground mb-1 block">Token TTL (jam)</label>
                   <input type="number" min={1} className="w-full rounded-md border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-                    value={priceForm.token_ttl_hours}
-                    onChange={e => setPriceForm(p => ({ ...p, token_ttl_hours: Number(e.target.value) }))} />
+                    value={priceForm.token_ttl_hours} onChange={e => setPriceForm(p => ({ ...p, token_ttl_hours: Number(e.target.value) }))} />
                 </div>
               </div>
               <div className="flex gap-4 flex-wrap">
                 <label className="flex items-center gap-2 text-sm cursor-pointer">
                   <input type="checkbox" className="rounded" checked={priceForm.is_active}
-                    onChange={e => setPriceForm(p => ({ ...p, is_active: e.target.checked }))} />
-                  Ticket Aktif
+                    onChange={e => setPriceForm(p => ({ ...p, is_active: e.target.checked }))} />Ticket Aktif
                 </label>
                 <label className="flex items-center gap-2 text-sm cursor-pointer">
                   <input type="checkbox" className="rounded" checked={priceForm.is_sale_open}
-                    onChange={e => setPriceForm(p => ({ ...p, is_sale_open: e.target.checked }))} />
-                  Penjualan Terbuka
+                    onChange={e => setPriceForm(p => ({ ...p, is_sale_open: e.target.checked }))} />Penjualan Terbuka
                 </label>
               </div>
               {priceMsg && <p className={`text-xs ${priceMsg.includes("berhasil") ? "text-green-600" : "text-red-500"}`}>{priceMsg}</p>}
@@ -2492,9 +3362,7 @@ export default function DashboardHome() {
                   {priceLoading ? "Menyimpan..." : "Simpan Harga"}
                 </button>
                 <button onClick={() => { setPriceTarget(null); setPriceMsg("") }}
-                  className="flex-1 rounded-md border px-4 py-2 text-sm hover:bg-muted/50 transition-colors">
-                  Batal
-                </button>
+                  className="flex-1 rounded-md border px-4 py-2 text-sm hover:bg-muted/50 transition-colors">Batal</button>
               </div>
             </div>
           </div>
@@ -2512,15 +3380,12 @@ export default function DashboardHome() {
                 <label className="text-xs font-medium text-muted-foreground mb-1 block">Komisi (%)</label>
                 <input type="number" min={0} max={100} step={0.5}
                   className="w-full rounded-md border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-                  value={approveCommission}
-                  onChange={e => setApproveCommission(e.target.value)} />
+                  value={approveCommission} onChange={e => setApproveCommission(e.target.value)} />
               </div>
               <div>
                 <label className="text-xs font-medium text-muted-foreground mb-1 block">Catatan (opsional)</label>
-                <input
-                  className="w-full rounded-md border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-                  placeholder="Catatan untuk reseller..."
-                  value={approveNotes}
+                <input className="w-full rounded-md border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                  placeholder="Catatan untuk reseller..." value={approveNotes}
                   onChange={e => setApproveNotes(e.target.value)} />
               </div>
               {approveMsg && <p className={`text-xs ${approveMsg.includes("berhasil") || approveMsg.toLowerCase().includes("approved") ? "text-green-600" : "text-red-500"}`}>{approveMsg}</p>}
@@ -2530,9 +3395,160 @@ export default function DashboardHome() {
                   {approveLoading ? "Memproses..." : "Approve"}
                 </button>
                 <button onClick={() => { setApproveTarget(null); setApproveMsg("") }}
-                  className="flex-1 rounded-md border px-4 py-2 text-sm hover:bg-muted/50 transition-colors">
-                  Batal
+                  className="flex-1 rounded-md border px-4 py-2 text-sm hover:bg-muted/50 transition-colors">Batal</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Edit Email Access */}
+      {editAccess && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="w-full max-w-md rounded-2xl border bg-background p-6 shadow-xl mx-4">
+            <h3 className="font-semibold mb-1">Edit Akses Email</h3>
+            <p className="text-sm text-muted-foreground mb-4 font-mono">{editAccess.email}</p>
+            <div className="flex flex-col gap-3">
+              <div>
+                <label className="text-xs font-medium text-muted-foreground mb-1 block">Label</label>
+                <input className="w-full rounded-md border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                  value={editAccessForm.label}
+                  onChange={e => setEditAccessForm(p => ({ ...p, label: e.target.value }))} />
+              </div>
+              <div>
+                <label className="text-xs font-medium text-muted-foreground mb-1 block">Berlaku Hingga (kosong = tak terbatas)</label>
+                <input type="datetime-local" className="w-full rounded-md border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                  value={editAccessForm.valid_until}
+                  onChange={e => setEditAccessForm(p => ({ ...p, valid_until: e.target.value }))} />
+              </div>
+              <div>
+                <label className="text-xs font-medium text-muted-foreground mb-1 block">Max Penggunaan (kosong = tak terbatas)</label>
+                <input type="number" min={0} className="w-full rounded-md border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                  value={editAccessForm.max_uses}
+                  onChange={e => setEditAccessForm(p => ({ ...p, max_uses: e.target.value }))} />
+              </div>
+              <div>
+                <label className="text-xs font-medium text-muted-foreground mb-1 block">Catatan Internal</label>
+                <input className="w-full rounded-md border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                  value={editAccessForm.notes}
+                  onChange={e => setEditAccessForm(p => ({ ...p, notes: e.target.value }))} />
+              </div>
+              <label className="flex items-center gap-2 text-sm cursor-pointer">
+                <input type="checkbox" className="rounded" checked={editAccessForm.is_active}
+                  onChange={e => setEditAccessForm(p => ({ ...p, is_active: e.target.checked }))} />
+                Akses Aktif
+              </label>
+              {editAccessMsg && (
+                <p className={`text-xs ${editAccessMsg.includes("berhasil") ? "text-green-600" : "text-red-500"}`}>{editAccessMsg}</p>
+              )}
+              <div className="flex gap-2">
+                <button onClick={handleEditAccessSave} disabled={editAccessLoading}
+                  className="flex-1 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50 transition-colors">
+                  {editAccessLoading ? "Menyimpan..." : "Simpan"}
                 </button>
+                <button onClick={() => { setEditAccess(null); setEditAccessMsg("") }}
+                  className="flex-1 rounded-md border px-4 py-2 text-sm hover:bg-muted/50 transition-colors">Batal</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Edit Stream Source */}
+      {editStream && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="w-full max-w-lg rounded-2xl border bg-background p-6 shadow-xl mx-4 max-h-[90vh] overflow-y-auto">
+            <h3 className="font-semibold mb-1">Edit Stream Source</h3>
+            <p className="text-sm text-muted-foreground mb-4 font-mono">{editStream.show_id}</p>
+            <div className="flex flex-col gap-3">
+              <div>
+                <label className="text-xs font-medium text-muted-foreground mb-1 block">Tipe Source</label>
+                <select className="w-full rounded-md border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                  value={editStream.source_type}
+                  onChange={e => setEditStream(p => p ? { ...p, source_type: e.target.value as any } : p)}>
+                  <option value="both">Both (RTMP + YouTube)</option>
+                  <option value="rtmp">RTMP saja</option>
+                  <option value="youtube">YouTube saja</option>
+                </select>
+              </div>
+
+              {(editStream.source_type === "rtmp" || editStream.source_type === "both") && (
+                <div className="rounded-lg border bg-orange-50/50 p-4 flex flex-col gap-3">
+                  <p className="text-xs font-semibold text-orange-700 uppercase tracking-wide">RTMP</p>
+                  <div>
+                    <label className="text-xs font-medium text-muted-foreground mb-1 block">RTMP URL</label>
+                    <input className="w-full rounded-md border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring font-mono"
+                      value={editStream.rtmp_url || ""}
+                      onChange={e => setEditStream(p => p ? { ...p, rtmp_url: e.target.value } : p)} />
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-xs font-medium text-muted-foreground mb-1 block">Label</label>
+                      <input className="w-full rounded-md border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                        value={editStream.rtmp_label || ""}
+                        onChange={e => setEditStream(p => p ? { ...p, rtmp_label: e.target.value } : p)} />
+                    </div>
+                    <div className="flex items-end pb-1">
+                      <label className="flex items-center gap-2 text-sm cursor-pointer">
+                        <input type="checkbox" className="rounded" checked={editStream.rtmp_is_active}
+                          onChange={e => setEditStream(p => p ? { ...p, rtmp_is_active: e.target.checked } : p)} />
+                        RTMP Aktif
+                      </label>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {(editStream.source_type === "youtube" || editStream.source_type === "both") && (
+                <div className="rounded-lg border bg-red-50/50 p-4 flex flex-col gap-3">
+                  <p className="text-xs font-semibold text-red-700 uppercase tracking-wide">YouTube</p>
+                  <div>
+                    <label className="text-xs font-medium text-muted-foreground mb-1 block">YouTube URL</label>
+                    <input className="w-full rounded-md border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                      value={editStream.youtube_url || ""}
+                      onChange={e => setEditStream(p => p ? { ...p, youtube_url: e.target.value } : p)} />
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-xs font-medium text-muted-foreground mb-1 block">Label</label>
+                      <input className="w-full rounded-md border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                        value={editStream.youtube_label || ""}
+                        onChange={e => setEditStream(p => p ? { ...p, youtube_label: e.target.value } : p)} />
+                    </div>
+                    <div className="flex items-end pb-1">
+                      <label className="flex items-center gap-2 text-sm cursor-pointer">
+                        <input type="checkbox" className="rounded" checked={editStream.youtube_is_active}
+                          onChange={e => setEditStream(p => p ? { ...p, youtube_is_active: e.target.checked } : p)} />
+                        YouTube Aktif
+                      </label>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              <div>
+                <label className="text-xs font-medium text-muted-foreground mb-1 block">Catatan</label>
+                <input className="w-full rounded-md border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                  value={editStream.notes || ""}
+                  onChange={e => setEditStream(p => p ? { ...p, notes: e.target.value } : p)} />
+              </div>
+
+              <label className="flex items-center gap-2 text-sm cursor-pointer">
+                <input type="checkbox" className="rounded" checked={editStream.is_active}
+                  onChange={e => setEditStream(p => p ? { ...p, is_active: e.target.checked } : p)} />
+                Stream Source Aktif
+              </label>
+
+              {editStreamMsg && (
+                <p className={`text-xs ${editStreamMsg.includes("berhasil") ? "text-green-600" : "text-red-500"}`}>{editStreamMsg}</p>
+              )}
+              <div className="flex gap-2">
+                <button onClick={handleEditStreamSave} disabled={editStreamLoading}
+                  className="flex-1 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50 transition-colors">
+                  {editStreamLoading ? "Menyimpan..." : "Simpan"}
+                </button>
+                <button onClick={() => { setEditStream(null); setEditStreamMsg("") }}
+                  className="flex-1 rounded-md border px-4 py-2 text-sm hover:bg-muted/50 transition-colors">Batal</button>
               </div>
             </div>
           </div>

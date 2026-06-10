@@ -2869,7 +2869,7 @@ async function handleActivate() {
                     <tr key={p.id} className="border-b last:border-0 hover:bg-muted/20 transition-colors">
                       <td className="px-4 py-2.5 font-mono text-xs font-medium text-primary">{p.product_code}</td>
                       <td className="px-4 py-2.5 text-xs">
-                        {p.plan_name}
+                        {p.product_code}
                         {p.is_popular && <span className="ml-1 inline-flex rounded px-1.5 py-0.5 text-xs bg-amber-100 text-amber-700">Populer</span>}
                       </td>
                       <td className="px-4 py-2.5">

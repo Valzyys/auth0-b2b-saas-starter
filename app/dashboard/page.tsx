@@ -428,7 +428,7 @@ export default function DashboardHome() {
   const [tokenLoading, setTokenLoading] = useState(false)
 
   // ─ Membership Plans ───────────────────────────────────────
-  const [membershipPlans, setMembershipPlans] = useState<MembershipPlan[]>([])
+  const [membershipPlans, setMembershipPlans] = useState<QrisProduct[]>([])
   const [plansLoading, setPlansLoading] = useState(false)
 
   // ─ Reseller Apps ──────────────────────────────────────────
@@ -686,16 +686,17 @@ export default function DashboardHome() {
     setLiveTokensLoading(false)
   }, [isAdmin])
 
-  const fetchMembershipPlans = useCallback(async () => {
-    if (!isAdmin) return
-    setPlansLoading(true)
-    try {
-      const res = await fetchWithAuth(`${API_BASE}/membership/plans?apikey=${API_KEY}`)
-      const data = await res.json()
-      if (data.status) setMembershipPlans(data.data || [])
-    } catch (_) {}
-    setPlansLoading(false)
-  }, [isAdmin])
+// SESUDAH
+const fetchMembershipPlans = useCallback(async () => {
+  if (!isAdmin) return
+  setPlansLoading(true)
+  try {
+    const res = await fetchWithAuth(`${API_BASE}/qris/admin/products?apikey=${API_KEY}`)
+    const data = await res.json()
+    if (data.status !== false) setMembershipPlans(data.data || [])
+  } catch (_) {}
+  setPlansLoading(false)
+}, [isAdmin]))
 
   const fetchResellerApps = useCallback(async () => {
     if (!isAdmin) return
@@ -819,32 +820,23 @@ export default function DashboardHome() {
   }
 
   // ─ Activate Membership ───────────────────────────────────
-  async function handleActivate() {
-    if (!activateTarget || !planCode) return
-    setActivateLoading(true); setActivateMsg("")
-    try {
-      let resolvedPlanCode = planCode.trim().toLowerCase()
-      if (membershipPlans.length > 0) {
-        const matched = membershipPlans.find(
-          p =>
-            p.plan_code.toLowerCase() === resolvedPlanCode ||
-            p.membership_type.toLowerCase() === resolvedPlanCode
-        )
-        if (matched) resolvedPlanCode = matched.plan_code
-      }
-      const res = await fetchWithAuth(`${API_BASE}/membership/activate?apikey=${API_KEY}`, {
-        method: "POST",
-        body: JSON.stringify({ user_id: activateTarget.user_id, plan_code: resolvedPlanCode }),
-      })
-      const data = await res.json()
-      setActivateMsg(data.message || (data.status ? "Berhasil" : "Gagal"))
-      if (data.status) {
-        setActivateTarget(null); setPlanCode(""); fetchUsers(); fetchStats()
-      }
-    } catch (_) { setActivateMsg("Error") }
-    setActivateLoading(false)
-  }
-
+ // SESUDAH
+async function handleActivate() {
+  if (!activateTarget || !planCode) return
+  setActivateLoading(true); setActivateMsg("")
+  try {
+    const res = await fetchWithAuth(`${API_BASE}/qris/admin/activate?apikey=${API_KEY}`, {
+      method: "POST",
+      body: JSON.stringify({ user_id: activateTarget.user_id, product_code: planCode }),
+    })
+    const data = await res.json()
+    setActivateMsg(data.message || (data.status ? "Berhasil" : "Gagal"))
+    if (data.status) {
+      setActivateTarget(null); setPlanCode(""); fetchUsers(); fetchStats()
+    }
+  } catch (_) { setActivateMsg("Error") }
+  setActivateLoading(false)
+}
   // ─ Broadcast ─────────────────────────────────────────────
   async function handleBroadcast(e: React.FormEvent) {
     e.preventDefault()
@@ -3142,11 +3134,11 @@ export default function DashboardHome() {
                   <select className="w-full rounded-md border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
                     value={planCode} onChange={e => setPlanCode(e.target.value)}>
                     <option value="">-- Pilih Paket --</option>
-                    {membershipPlans.filter(p => p.is_active).map(p => (
-                      <option key={p.id} value={p.plan_code}>
-                        {p.plan_name} ({p.plan_code}) — {p.duration_days} hari — {formatRp(p.price)}
-                      </option>
-                    ))}
+{membershipPlans.filter(p => p.is_active && p.is_purchase_open).map(p => (
+  <option key={p.id} value={p.product_code}>
+    {p.product_name} ({p.product_code}) — {p.duration_days} hari — {formatRp(p.price_sale ?? p.price)}
+  </option>
+))}
                   </select>
                 ) : (
                   <div className="flex gap-2">

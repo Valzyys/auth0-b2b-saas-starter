@@ -246,6 +246,19 @@ type StreamSource = {
   updated_at: string
 }
 
+type ReplayRow = {
+  id: number
+  show_id: string
+  title: string
+  youtube_url: string | null
+  rtmp_url: string | null
+  thumbnail_url: string | null
+  is_active: boolean
+  created_by: string
+  created_at: string
+  updated_at: string
+}
+
 // ── Helpers ───────────────────────────────────────────────────
 
 function formatRp(amount: number | string) {
@@ -562,6 +575,19 @@ export default function DashboardHome() {
   const [editStreamMsg, setEditStreamMsg] = useState("")
   const [editStreamLoading, setEditStreamLoading] = useState(false)
 
+  // ─ Replay ─────────────────────────────────────────────────
+const [replays, setReplays] = useState<ReplayRow[]>([])
+const [replayLoading, setReplayLoading] = useState(false)
+const [replayTab, setReplayTab] = useState("list")
+const [replayForm, setReplayForm] = useState({
+  show_id: "", title: "", youtube_url: "", rtmp_url: "", thumbnail_url: "",
+})
+const [replayFormMsg, setReplayFormMsg] = useState("")
+const [replayFormLoading, setReplayFormLoading] = useState(false)
+const [editReplay, setEditReplay] = useState<ReplayRow | null>(null)
+const [editReplayMsg, setEditReplayMsg] = useState("")
+const [editReplayLoading, setEditReplayLoading] = useState(false)
+  
   // ═══════════════════════════════════════════════════════════
   // FETCH FUNCTIONS
   // ═══════════════════════════════════════════════════════════
@@ -762,12 +788,24 @@ const fetchMembershipPlans = useCallback(async () => {
     if (activeSection === "resellers") fetchResellerApps()
     if (activeSection === "email-access") fetchEmailAccess()
     if (activeSection === "stream-control") fetchStreamSources()
+    if (activeSection === "replay") fetchReplays()
   }, [activeSection, isAdmin])
 
   useEffect(() => {
     if (isAdmin && activeSection === "resellers") fetchResellerApps()
   }, [resellerFilter])
 
+  const fetchReplays = useCallback(async () => {
+  if (!isAdmin) return
+  setReplayLoading(true)
+  try {
+    const res = await fetchWithAuth(`${API_BASE}/admin/replay?apikey=${API_KEY}&limit=50`)
+    const data = await res.json()
+    if (data.status !== false) setReplays(data.data || [])
+  } catch (_) {}
+  setReplayLoading(false)
+}, [isAdmin])
+  
   // ═══════════════════════════════════════════════════════════
   // ACTIONS
   // ═══════════════════════════════════════════════════════════
@@ -1327,6 +1365,71 @@ async function handleActivate() {
     setEditStreamLoading(false)
   }
 
+  async function handleSaveReplay(e: React.FormEvent) {
+  e.preventDefault()
+  if (!replayForm.show_id || !replayForm.title) return
+  setReplayFormLoading(true); setReplayFormMsg("")
+  try {
+    const body: any = { ...replayForm }
+    if (!body.rtmp_url) delete body.rtmp_url
+    if (!body.thumbnail_url) delete body.thumbnail_url
+    const res = await fetchWithAuth(`${API_BASE}/admin/replay?apikey=${API_KEY}`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    })
+    const data = await res.json()
+    setReplayFormMsg(data.message)
+    if (data.status) {
+      setReplayForm({ show_id: "", title: "", youtube_url: "", rtmp_url: "", thumbnail_url: "" })
+      fetchReplays()
+    }
+  } catch (_) { setReplayFormMsg("Error") }
+  setReplayFormLoading(false)
+}
+
+async function handleEditReplaySave() {
+  if (!editReplay) return
+  setEditReplayLoading(true); setEditReplayMsg("")
+  try {
+    const res = await fetchWithAuth(`${API_BASE}/admin/replay?apikey=${API_KEY}`, {
+      method: "POST",
+      body: JSON.stringify({
+        show_id: editReplay.show_id,
+        title: editReplay.title,
+        youtube_url: editReplay.youtube_url || "",
+        rtmp_url: editReplay.rtmp_url || "",
+        thumbnail_url: editReplay.thumbnail_url || "",
+      }),
+    })
+    const data = await res.json()
+    setEditReplayMsg(data.message)
+    if (data.status) { setEditReplay(null); fetchReplays() }
+  } catch (_) { setEditReplayMsg("Error") }
+  setEditReplayLoading(false)
+}
+
+async function handleDeleteReplay(showId: string) {
+  if (!confirm(`Hapus replay untuk show ${showId}?`)) return
+  try {
+    const res = await fetchWithAuth(`${API_BASE}/admin/replay/${showId}?apikey=${API_KEY}`, {
+      method: "DELETE",
+    })
+    const data = await res.json()
+    alert(data.message)
+    if (data.status) fetchReplays()
+  } catch (_) {}
+}
+
+async function handleToggleReplay(showId: string) {
+  try {
+    const res = await fetchWithAuth(`${API_BASE}/admin/replay/${showId}/toggle?apikey=${API_KEY}`, {
+      method: "PUT",
+    })
+    const data = await res.json()
+    if (data.status) fetchReplays()
+    else alert(data.message)
+  } catch (_) {}
+}
   // ═══════════════════════════════════════════════════════════
   // RENDER: NON-ADMIN / LOADING
   // ═══════════════════════════════════════════════════════════
@@ -1409,6 +1512,7 @@ async function handleActivate() {
     { key: "membership-plans",  label: "Paket Member" },
     { key: "resellers",         label: "Reseller" },
     { key: "broadcast",         label: "Broadcast" },
+    { key: "replay", label: "Replay" },
   ]
 
   return (
@@ -2869,7 +2973,7 @@ async function handleActivate() {
                     <tr key={p.id} className="border-b last:border-0 hover:bg-muted/20 transition-colors">
                       <td className="px-4 py-2.5 font-mono text-xs font-medium text-primary">{p.product_code}</td>
                       <td className="px-4 py-2.5 text-xs">
-                        {p.product_code}
+                        {p.product_name}
                         {p.is_popular && <span className="ml-1 inline-flex rounded px-1.5 py-0.5 text-xs bg-amber-100 text-amber-700">Populer</span>}
                       </td>
                       <td className="px-4 py-2.5">
@@ -3054,6 +3158,146 @@ async function handleActivate() {
           </div>
         </div>
       )}
+
+      {/* ══════════════════════════════════════════════════════ */}
+{/* REPLAY */}
+{/* ══════════════════════════════════════════════════════ */}
+{activeSection === "replay" && (
+  <div className="flex flex-col gap-6">
+    <TabBar
+      tabs={[
+        { key: "list", label: "Daftar Replay" },
+        { key: "add",  label: "Tambah Replay" },
+      ]}
+      active={replayTab}
+      onChange={setReplayTab}
+    />
+
+    {/* LIST */}
+    {replayTab === "list" && (
+      <div className="flex flex-col gap-4">
+        <div className="flex items-center justify-between">
+          <SectionHeader title="Daftar Replay" sub="Semua replay show yang sudah dikonfigurasi" />
+          <button onClick={fetchReplays} className="rounded-md border px-3 py-1.5 text-sm hover:bg-muted/50 transition-colors">
+            Refresh
+          </button>
+        </div>
+        {replayLoading ? (
+          <div className="h-32 rounded-xl border bg-muted/30 animate-pulse" />
+        ) : (
+          <div className="overflow-x-auto rounded-xl border">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b bg-muted/30">
+                  <th className="text-left px-4 py-2.5 font-medium text-muted-foreground">Show</th>
+                  <th className="text-left px-4 py-2.5 font-medium text-muted-foreground">YouTube</th>
+                  <th className="text-left px-4 py-2.5 font-medium text-muted-foreground">RTMP</th>
+                  <th className="text-left px-4 py-2.5 font-medium text-muted-foreground">Status</th>
+                  <th className="text-left px-4 py-2.5 font-medium text-muted-foreground">Dibuat</th>
+                  <th className="text-right px-4 py-2.5 font-medium text-muted-foreground">Aksi</th>
+                </tr>
+              </thead>
+              <tbody>
+                {replays.length === 0 ? (
+                  <tr><td colSpan={6} className="text-center py-8 text-muted-foreground">Belum ada replay</td></tr>
+                ) : replays.map(r => (
+                  <tr key={r.id} className="border-b last:border-0 hover:bg-muted/20 transition-colors">
+                    <td className="px-4 py-2.5">
+                      <p className="font-medium text-xs">{r.title}</p>
+                      <p className="text-xs text-muted-foreground font-mono">{r.show_id}</p>
+                    </td>
+                    <td className="px-4 py-2.5 text-xs">
+                      {r.youtube_url ? (
+                        <a href={`https://youtu.be/${r.youtube_url}`} target="_blank" rel="noopener noreferrer"
+                          className="font-mono text-blue-600 hover:underline">{r.youtube_url}</a>
+                      ) : <span className="text-muted-foreground">—</span>}
+                    </td>
+                    <td className="px-4 py-2.5 text-xs">
+                      {r.rtmp_url ? (
+                        <p className="font-mono truncate max-w-[140px]" title={r.rtmp_url}>{r.rtmp_url}</p>
+                      ) : <span className="text-muted-foreground">—</span>}
+                    </td>
+                    <td className="px-4 py-2.5">
+                      <span className={`inline-flex rounded px-2 py-0.5 text-xs font-medium ${r.is_active ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-500"}`}>
+                        {r.is_active ? "Aktif" : "Nonaktif"}
+                      </span>
+                    </td>
+                    <td className="px-4 py-2.5 text-xs text-muted-foreground">{formatDate(r.created_at)}</td>
+                    <td className="px-4 py-2.5">
+                      <div className="flex justify-end gap-1 flex-wrap">
+                        <button
+                          onClick={() => { setEditReplay({ ...r }); setEditReplayMsg("") }}
+                          className="rounded border px-2 py-1 text-xs hover:bg-blue-50 hover:border-blue-300 hover:text-blue-700 transition-colors"
+                        >Edit</button>
+                        <button
+                          onClick={() => handleToggleReplay(r.show_id)}
+                          className="rounded border px-2 py-1 text-xs hover:bg-muted/50 transition-colors"
+                        >{r.is_active ? "Nonaktifkan" : "Aktifkan"}</button>
+                        <button
+                          onClick={() => handleDeleteReplay(r.show_id)}
+                          className="rounded border px-2 py-1 text-xs hover:bg-red-50 hover:border-red-300 hover:text-red-700 transition-colors"
+                        >Hapus</button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    )}
+
+    {/* ADD */}
+    {replayTab === "add" && (
+      <div className="rounded-xl border p-5 max-w-2xl">
+        <SectionHeader title="Tambah / Update Replay" sub="Jika show_id sudah ada, data akan ditimpa (upsert)" />
+        <form onSubmit={handleSaveReplay} className="flex flex-col gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div>
+              <label className="text-xs font-medium text-muted-foreground mb-1 block">Show ID *</label>
+              <input className="w-full rounded-md border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                placeholder="cth: show_abc123" value={replayForm.show_id}
+                onChange={e => setReplayForm(p => ({ ...p, show_id: e.target.value }))} required />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-muted-foreground mb-1 block">Judul *</label>
+              <input className="w-full rounded-md border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                placeholder="cth: JKT48 Theater Show - 1 Juli 2025" value={replayForm.title}
+                onChange={e => setReplayForm(p => ({ ...p, title: e.target.value }))} required />
+            </div>
+            <div className="sm:col-span-2">
+              <label className="text-xs font-medium text-muted-foreground mb-1 block">YouTube URL</label>
+              <input className="w-full rounded-md border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                placeholder="https://www.youtube.com/watch?v=xxxxx" value={replayForm.youtube_url}
+                onChange={e => setReplayForm(p => ({ ...p, youtube_url: e.target.value }))} />
+              <p className="text-xs text-muted-foreground mt-1">Video ID akan diekstrak otomatis dari URL di backend.</p>
+            </div>
+            <div className="sm:col-span-2">
+              <label className="text-xs font-medium text-muted-foreground mb-1 block">RTMP URL (opsional)</label>
+              <input className="w-full rounded-md border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring font-mono"
+                placeholder="rtmp://..." value={replayForm.rtmp_url}
+                onChange={e => setReplayForm(p => ({ ...p, rtmp_url: e.target.value }))} />
+            </div>
+            <div className="sm:col-span-2">
+              <label className="text-xs font-medium text-muted-foreground mb-1 block">Thumbnail URL (opsional)</label>
+              <input className="w-full rounded-md border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                placeholder="https://..." value={replayForm.thumbnail_url}
+                onChange={e => setReplayForm(p => ({ ...p, thumbnail_url: e.target.value }))} />
+            </div>
+          </div>
+          {replayFormMsg && (
+            <p className={`text-xs ${replayFormMsg.includes("disimpan") || replayFormMsg.includes("berhasil") ? "text-green-600" : "text-red-500"}`}>{replayFormMsg}</p>
+          )}
+          <button type="submit" disabled={replayFormLoading || !replayForm.show_id || !replayForm.title}
+            className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50 transition-colors w-fit">
+            {replayFormLoading ? "Menyimpan..." : "Simpan Replay"}
+          </button>
+        </form>
+      </div>
+    )}
+  </div>
+)}
 
       {/* ══════════════════════════════════════════════════════ */}
       {/* MODALS */}
@@ -3446,6 +3690,54 @@ async function handleActivate() {
           </div>
         </div>
       )}
+
+      {/* Modal: Edit Replay */}
+{editReplay && (
+  <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+    <div className="w-full max-w-lg rounded-2xl border bg-background p-6 shadow-xl mx-4">
+      <h3 className="font-semibold mb-1">Edit Replay</h3>
+      <p className="text-sm text-muted-foreground mb-4 font-mono">{editReplay.show_id}</p>
+      <div className="flex flex-col gap-3">
+        <div>
+          <label className="text-xs font-medium text-muted-foreground mb-1 block">Judul</label>
+          <input className="w-full rounded-md border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+            value={editReplay.title}
+            onChange={e => setEditReplay(p => p ? { ...p, title: e.target.value } : p)} />
+        </div>
+        <div>
+          <label className="text-xs font-medium text-muted-foreground mb-1 block">YouTube URL</label>
+          <input className="w-full rounded-md border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+            placeholder="https://www.youtube.com/watch?v=xxxxx"
+            value={editReplay.youtube_url || ""}
+            onChange={e => setEditReplay(p => p ? { ...p, youtube_url: e.target.value } : p)} />
+        </div>
+        <div>
+          <label className="text-xs font-medium text-muted-foreground mb-1 block">RTMP URL</label>
+          <input className="w-full rounded-md border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring font-mono"
+            value={editReplay.rtmp_url || ""}
+            onChange={e => setEditReplay(p => p ? { ...p, rtmp_url: e.target.value } : p)} />
+        </div>
+        <div>
+          <label className="text-xs font-medium text-muted-foreground mb-1 block">Thumbnail URL</label>
+          <input className="w-full rounded-md border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+            value={editReplay.thumbnail_url || ""}
+            onChange={e => setEditReplay(p => p ? { ...p, thumbnail_url: e.target.value } : p)} />
+        </div>
+        {editReplayMsg && (
+          <p className={`text-xs ${editReplayMsg.includes("disimpan") || editReplayMsg.includes("berhasil") ? "text-green-600" : "text-red-500"}`}>{editReplayMsg}</p>
+        )}
+        <div className="flex gap-2">
+          <button onClick={handleEditReplaySave} disabled={editReplayLoading}
+            className="flex-1 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50 transition-colors">
+            {editReplayLoading ? "Menyimpan..." : "Simpan"}
+          </button>
+          <button onClick={() => { setEditReplay(null); setEditReplayMsg("") }}
+            className="flex-1 rounded-md border px-4 py-2 text-sm hover:bg-muted/50 transition-colors">Batal</button>
+        </div>
+      </div>
+    </div>
+  </div>
+)}
 
       {/* Modal: Edit Stream Source */}
       {editStream && (

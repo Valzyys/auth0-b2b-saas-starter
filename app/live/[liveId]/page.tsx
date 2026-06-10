@@ -9,16 +9,16 @@ const IDN_API   = "https://v5.jkt48connect.com/api/jkt48/idnplus?apikey=JKTCONNE
 const API_KEY   = "JKTCONNECT"
 const LS_PREFIX = "t48_live_access_"
 
+// Email access cache key & TTL (7 jam)
+const EMAIL_ACCESS_KEY    = "t48_email_access"
+const EMAIL_ACCESS_TTL_MS = 7 * 60 * 60 * 1000
+
 // ─── Slug thumbnail overrides ─────────────────────────────────
-// Key: substring yang ada di slug (case-insensitive)
-// Value: URL gambar pengganti
 const SLUG_THUMBNAIL_OVERRIDES: { pattern: string; image: string }[] = [
   {
     pattern: "request-hour",
     image:   "https://files.catbox.moe/l5azzz.jpg",
   },
-  // Tambah pattern lain di sini kalau perlu, contoh:
-  // { pattern: "birthday-show", image: "https://..." },
 ]
 
 function getSlugThumbnail(slug: string | null | undefined): string | null {
@@ -30,7 +30,6 @@ function getSlugThumbnail(slug: string | null | undefined): string | null {
   return null
 }
 
-// Apply thumbnail override ke show object (tidak mutate asli)
 function applyThumbnailOverride(show: IdnShow): IdnShow {
   const override = getSlugThumbnail(show.slug)
   if (!override) return show
@@ -89,6 +88,14 @@ interface CachedAccess {
   expiresAt:  number | null
 }
 
+// Email access cache yang disimpan di localStorage
+interface CachedEmailAccess {
+  email:     string
+  showId:    string | null
+  grantedAt: number
+  expiresAt: number // grantedAt + 7 jam
+}
+
 type VerifyState =
   | "checking"
   | "waiting_live"
@@ -96,6 +103,10 @@ type VerifyState =
   | "granted"
   | "denied"
   | "membership"
+  | "email_access"       // akses via email (granted)
+  | "email_form"         // tampilkan form input email
+  | "email_checking"     // sedang verifikasi email ke API
+  | "email_denied"       // email tidak punya akses
   | "error"
 
 // ─── Helpers ─────────────────────────────────────────────────
@@ -145,6 +156,36 @@ function writeCachedAccess(data: CachedAccess) {
   try { localStorage.setItem(`${LS_PREFIX}${data.liveId}`, JSON.stringify(data)) } catch {}
 }
 
+// ── Email access cache helpers ───────────────────────────────
+
+function readCachedEmailAccess(showId: string | null): CachedEmailAccess | null {
+  try {
+    const raw = localStorage.getItem(`${EMAIL_ACCESS_KEY}_${showId ?? "global"}`)
+    if (!raw) return null
+    const data = JSON.parse(raw) as CachedEmailAccess
+    if (Date.now() > data.expiresAt) {
+      localStorage.removeItem(`${EMAIL_ACCESS_KEY}_${showId ?? "global"}`)
+      return null
+    }
+    return data
+  } catch { return null }
+}
+
+function writeCachedEmailAccess(data: CachedEmailAccess) {
+  try {
+    localStorage.setItem(
+      `${EMAIL_ACCESS_KEY}_${data.showId ?? "global"}`,
+      JSON.stringify(data)
+    )
+  } catch {}
+}
+
+function clearCachedEmailAccess(showId: string | null) {
+  try {
+    localStorage.removeItem(`${EMAIL_ACCESS_KEY}_${showId ?? "global"}`)
+  } catch {}
+}
+
 function pad(n: number) { return String(n).padStart(2, "0") }
 
 function formatSchedule(ts: number) {
@@ -192,17 +233,203 @@ function HlsPlayer({ src, className }: { src: string; className?: string }) {
   return <video ref={videoRef} className={className} controls autoPlay playsInline muted />
 }
 
+// ─── Email Access Form ────────────────────────────────────────
+function EmailAccessForm({
+  show,
+  onSuccess,
+  onBack,
+}: {
+  show:      IdnShow | null
+  onSuccess: (email: string) => void
+  onBack?:   () => void
+}) {
+  const [email,     setEmail]     = useState("")
+  const [loading,   setLoading]   = useState(false)
+  const [errorMsg,  setErrorMsg]  = useState("")
+
+  const handleSubmit = async () => {
+    const trimmed = email.trim().toLowerCase()
+    if (!trimmed) { setErrorMsg("Email wajib diisi"); return }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) {
+      setErrorMsg("Format email tidak valid"); return
+    }
+
+    setLoading(true)
+    setErrorMsg("")
+
+    try {
+      // 1. Cek apakah email punya akses (GET check — tidak consume dulu)
+      const showId = show?.showId ?? null
+      const checkUrl = showId
+        ? `${API_BASE}/email-access/check?email=${encodeURIComponent(trimmed)}&show_id=${showId}&apikey=${API_KEY}`
+        : `${API_BASE}/email-access/check?email=${encodeURIComponent(trimmed)}&apikey=${API_KEY}`
+
+      const checkRes  = await fetch(checkUrl)
+      const checkData = await checkRes.json()
+
+      if (!checkData.has_access) {
+        const reason = checkData.reason
+        if (reason === "MAX_USES_REACHED") {
+          setErrorMsg("Akses email ini sudah habis digunakan.")
+        } else {
+          setErrorMsg("Email ini tidak memiliki akses untuk menonton.")
+        }
+        setLoading(false)
+        return
+      }
+
+      // 2. Use (increment uses_count)
+      const useRes = await fetch(`${API_BASE}/email-access/use?apikey=${API_KEY}`, {
+        method:  "POST",
+        headers: { "Content-Type": "application/json" },
+        body:    JSON.stringify({ email: trimmed, show_id: showId }),
+      })
+      const useData = await useRes.json()
+
+      if (!useData.has_access) {
+        setErrorMsg(useData.message || "Akses ditolak.")
+        setLoading(false)
+        return
+      }
+
+      // 3. Simpan ke localStorage (TTL 7 jam)
+      writeCachedEmailAccess({
+        email:     trimmed,
+        showId:    showId,
+        grantedAt: Date.now(),
+        expiresAt: Date.now() + EMAIL_ACCESS_TTL_MS,
+      })
+
+      onSuccess(trimmed)
+    } catch {
+      setErrorMsg("Gagal menghubungi server. Coba lagi.")
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleKey = (e: React.KeyboardEvent) => {
+    if (e.key === "Enter") handleSubmit()
+  }
+
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-[#0a0a0a] px-4">
+      <div className="w-full max-w-sm space-y-6">
+
+        {/* Show info */}
+        {show && (
+          <div className="space-y-3 text-center">
+            {show.image_url && (
+              <div className="relative mx-auto h-36 w-full max-w-xs overflow-hidden rounded-xl bg-white/5">
+                <img src={show.image_url} alt={show.title}
+                  className="h-full w-full object-cover opacity-50" />
+                <div className="absolute inset-0 bg-gradient-to-t from-black/70 to-transparent" />
+              </div>
+            )}
+            <div className="space-y-1">
+              <p className="text-xs font-semibold uppercase tracking-widest text-white/40">JKT48 Live</p>
+              <h1 className="text-base font-bold text-white leading-snug">{show.title}</h1>
+              {show.creator && (
+                <div className="flex items-center justify-center gap-2">
+                  {show.creator.image_url && (
+                    <img src={show.creator.image_url} alt={show.creator.name}
+                      className="h-5 w-5 rounded-full object-cover" />
+                  )}
+                  <span className="text-xs text-white/50">{show.creator.name}</span>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Form card */}
+        <div className="rounded-2xl border border-white/10 bg-white/5 p-6 space-y-5">
+          <div className="space-y-1.5">
+            <div className="flex items-center gap-2">
+              <svg className="h-5 w-5 text-white/60 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
+                  d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+              </svg>
+              <p className="text-sm font-semibold text-white">Masuk dengan Email</p>
+            </div>
+            <p className="text-xs text-white/40 pl-7">
+              Masukkan email yang terdaftar untuk mengakses siaran ini.
+            </p>
+          </div>
+
+          <div className="space-y-3">
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium text-white/50">Alamat Email</label>
+              <input
+                type="email"
+                value={email}
+                onChange={e => { setEmail(e.target.value); setErrorMsg("") }}
+                onKeyDown={handleKey}
+                placeholder="contoh@email.com"
+                disabled={loading}
+                className={`w-full rounded-xl border px-4 py-3 text-sm text-white
+                  bg-white/5 placeholder-white/20 outline-none transition-colors
+                  focus:border-white/30 focus:bg-white/8
+                  disabled:opacity-50
+                  ${errorMsg ? "border-red-500/50" : "border-white/10"}`}
+              />
+              {errorMsg && (
+                <p className="text-xs text-red-400 flex items-center gap-1.5">
+                  <svg className="h-3.5 w-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                      d="M12 9v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  {errorMsg}
+                </p>
+              )}
+            </div>
+
+            <button
+              onClick={handleSubmit}
+              disabled={loading || !email.trim()}
+              className="w-full rounded-xl bg-white py-3 text-sm font-semibold text-black
+                transition-all hover:bg-white/90 active:scale-[0.98]
+                disabled:opacity-40 disabled:cursor-not-allowed
+                flex items-center justify-center gap-2"
+            >
+              {loading ? (
+                <>
+                  <div className="h-4 w-4 animate-spin rounded-full border-2 border-black/20 border-t-black" />
+                  Memverifikasi...
+                </>
+              ) : (
+                <>
+                  <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                      d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  Verifikasi & Tonton
+                </>
+              )}
+            </button>
+          </div>
+        </div>
+
+        <p className="text-center text-xs text-white/25">
+          Akses berlaku selama 7 jam sejak verifikasi
+        </p>
+      </div>
+    </div>
+  )
+}
+
 // ─── Verify Screen ────────────────────────────────────────────
 function VerifyScreen({
-  state, tokenInfo, countdown, show, liveId, errorMsg, onRetry,
+  state, tokenInfo, countdown, show, liveId, errorMsg, onRetry, onUseEmail,
 }: {
-  state:     VerifyState
-  tokenInfo: LiveTokenInfo | null
-  countdown: { diff: number; h: number; m: number; s: number }
-  show:      IdnShow | null
-  liveId:    string
-  errorMsg:  string
-  onRetry:   () => void
+  state:      VerifyState
+  tokenInfo:  LiveTokenInfo | null
+  countdown:  { diff: number; h: number; m: number; s: number }
+  show:       IdnShow | null
+  liveId:     string
+  errorMsg:   string
+  onRetry:    () => void
+  onUseEmail: () => void
 }) {
   const isScheduled = show?.status === "scheduled" && countdown.diff > 0
 
@@ -351,6 +578,20 @@ function VerifyScreen({
                 {!tokenInfo.is_active  && <p className="text-red-400">⚠ Token dinonaktifkan admin</p>}
               </div>
             )}
+
+            {/* Fallback ke email access */}
+            <div className="pt-2 border-t border-white/10 space-y-3">
+              <p className="text-xs text-white/30">Punya akses lewat email?</p>
+              <button onClick={onUseEmail}
+                className="w-full rounded-xl border border-white/10 bg-white/5 py-2.5 text-sm font-medium text-white/70
+                  hover:bg-white/10 hover:text-white transition-colors flex items-center justify-center gap-2">
+                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                    d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                </svg>
+                Masuk dengan Email
+              </button>
+            </div>
           </div>
         )}
 
@@ -369,6 +610,17 @@ function VerifyScreen({
               className="w-full rounded-xl bg-white/10 py-2.5 text-sm font-medium text-white hover:bg-white/15 transition-colors">
               Coba Lagi
             </button>
+
+            {/* Fallback ke email */}
+            <button onClick={onUseEmail}
+              className="w-full rounded-xl border border-white/10 bg-transparent py-2.5 text-sm font-medium text-white/50
+                hover:bg-white/5 hover:text-white/70 transition-colors flex items-center justify-center gap-2">
+              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                  d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+              </svg>
+              Atau masuk dengan Email
+            </button>
           </div>
         )}
 
@@ -386,6 +638,9 @@ function PlayerView({
   liveId,
   isMember,
   user,
+  accessMode,
+  accessEmail,
+  onSignOutEmail,
 }: {
   show:            IdnShow
   streamData:      StreamData | null
@@ -394,6 +649,9 @@ function PlayerView({
   liveId:          string
   isMember:        boolean
   user:            { username?: string } | null
+  accessMode:      "token" | "membership" | "email"
+  accessEmail?:    string
+  onSignOutEmail?: () => void
 }) {
   const countdown = useCountdown(show.status === "scheduled" ? (show.scheduled_at ?? null) : null)
 
@@ -431,13 +689,22 @@ function PlayerView({
         </div>
 
         <div className="flex items-center gap-2 shrink-0">
-          {isMember ? (
+          {/* Access badge */}
+          {accessMode === "membership" || isMember ? (
             <span className="flex items-center gap-1 rounded-full bg-blue-500/20 px-2.5 py-1 text-xs font-medium text-blue-300">
               <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
                   d="M9 12l2 2 4-4M7.835 4.697a3.42 3.42 0 001.946-.806 3.42 3.42 0 014.438 0 3.42 3.42 0 001.946.806 3.42 3.42 0 013.138 3.138 3.42 3.42 0 00.806 1.946 3.42 3.42 0 010 4.438 3.42 3.42 0 00-.806 1.946 3.42 3.42 0 01-3.138 3.138 3.42 3.42 0 00-1.946.806 3.42 3.42 0 01-4.438 0 3.42 3.42 0 00-1.946-.806 3.42 3.42 0 01-3.138-3.138 3.42 3.42 0 00-.806-1.946 3.42 3.42 0 010-4.438 3.42 3.42 0 00.806-1.946 3.42 3.42 0 013.138-3.138z" />
               </svg>
               Member
+            </span>
+          ) : accessMode === "email" ? (
+            <span className="flex items-center gap-1 rounded-full bg-purple-500/20 px-2.5 py-1 text-xs font-medium text-purple-300">
+              <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                  d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+              </svg>
+              Email
             </span>
           ) : (
             <span className="flex items-center gap-1 rounded-full bg-green-500/20 px-2.5 py-1 text-xs font-medium text-green-300">
@@ -448,6 +715,7 @@ function PlayerView({
               Tiket Aktif
             </span>
           )}
+
           {isLive && (
             <div className="relative flex items-center gap-1.5 rounded-full bg-red-600 px-2.5 py-1 text-xs font-bold">
               <span className="absolute h-1.5 w-1.5 rounded-full bg-white animate-ping" />
@@ -607,12 +875,22 @@ function PlayerView({
       </div>
 
       {/* Footer */}
-      <div className="px-4 py-3 mt-auto">
+      <div className="px-4 py-3 mt-auto flex items-center justify-between">
         <p className="text-xs text-white/20">
-          {isMember
+          {accessMode === "membership"
             ? `Akses via membership · ${user?.username ?? "member"}`
+            : accessMode === "email"
+            ? `Akses via email · ${accessEmail ?? ""}`
             : `Akses via tiket · ${liveId}`}
         </p>
+
+        {/* Tombol sign out email access */}
+        {accessMode === "email" && onSignOutEmail && (
+          <button onClick={onSignOutEmail}
+            className="text-xs text-white/25 hover:text-white/50 transition-colors">
+            Keluar
+          </button>
+        )}
       </div>
     </div>
   )
@@ -626,12 +904,17 @@ export default function LiveTokenPage() {
   // Special case: /live/memb — membership-only direct access
   const isMembRoute = liveId === "memb"
 
+  // Deteksi apakah ada token di URL (bukan "memb" dan tidak kosong)
+  const hasTokenInUrl = !!liveId && liveId !== "memb"
+
   const [verifyState,  setVerifyState]  = useState<VerifyState>("checking")
   const [tokenInfo,    setTokenInfo]    = useState<LiveTokenInfo | null>(null)
   const [show,         setShow]         = useState<IdnShow | null>(null)
   const [streamData,   setStreamData]   = useState<StreamData | null>(null)
   const [activeSource, setActiveSource] = useState<"rtmp" | "youtube">("rtmp")
   const [errorMsg,     setErrorMsg]     = useState("")
+  const [accessMode,   setAccessMode]   = useState<"token" | "membership" | "email">("token")
+  const [accessEmail,  setAccessEmail]  = useState<string | undefined>(undefined)
 
   const pollingRef  = useRef<ReturnType<typeof setInterval> | null>(null)
   const consumedRef = useRef(false)
@@ -658,8 +941,6 @@ export default function LiveTokenPage() {
       if (exact) return applyThumbnailOverride(exact)
     }
 
-    // showId null or not matched — pick best available show
-    // Priority: live > soonest scheduled > most recent ended
     const live = all.filter(s => s.status === "live")
     if (live.length) return applyThumbnailOverride(live[0])
 
@@ -718,10 +999,40 @@ export default function LiveTokenPage() {
     }
   }, [liveId])
 
+  // ── Email access granted callback ──────────────────────
+  const handleEmailAccessGranted = useCallback(async (email: string) => {
+    setAccessEmail(email)
+    setAccessMode("email")
+    setVerifyState("email_access")
+    const s = await findShow(null)
+    if (s) { setShow(s); fetchStream(s.showId) }
+  }, [findShow, fetchStream])
+
+  // ── Sign out email access ───────────────────────────────
+  const handleSignOutEmail = useCallback(() => {
+    const showId = show?.showId ?? null
+    clearCachedEmailAccess(showId)
+    setAccessEmail(undefined)
+    setAccessMode("token")
+    setVerifyState("email_form")
+  }, [show])
+
   // ── Core verification flow ──────────────────────────────
   const runVerification = useCallback(async () => {
     setVerifyState("checking")
     consumedRef.current = false
+
+    // ── 0. Cek cache email access dulu (berlaku 7 jam) ───
+    // Dilakukan paling awal agar tidak perlu fetch apapun kalau sudah ada cache
+    const cachedEmail = readCachedEmailAccess(null) // global check
+    if (cachedEmail) {
+      setAccessEmail(cachedEmail.email)
+      setAccessMode("email")
+      setVerifyState("email_access")
+      const s = await findShow(null)
+      if (s) { setShow(s); fetchStream(s.showId) }
+      return
+    }
 
     // ── Route: /live/memb — membership-only direct page ──
     if (isMembRoute) {
@@ -731,37 +1042,47 @@ export default function LiveTokenPage() {
         setVerifyState("denied")
         return
       }
+      setAccessMode("membership")
       setVerifyState("membership")
       const s = await findShow(null)
       if (s) { setShow(s); fetchStream(s.showId) }
       return
     }
 
-    if (!liveId) { setErrorMsg("Token tidak valid"); setVerifyState("denied"); return }
+    // ── Tidak ada token di URL → langsung tampilkan form email ──
+    if (!hasTokenInUrl) {
+      // Fetch show dulu agar form bisa tampilkan info show
+      const s = await findShow(null)
+      if (s) setShow(s)
+      setVerifyState("email_form")
+      return
+    }
 
-    // ── 1. Cache hit → skip consume ──────────────────────
+    // ── Ada token di URL — flow normal ──────────────────
+
+    // 1. Cache hit → skip consume
     const cached = readCachedAccess(liveId)
     if (cached) {
+      setAccessMode("token")
       setVerifyState("granted")
       const s = await findShow(cached.showId)
       if (s) { setShow(s); fetchStream(s.showId) }
       return
     }
 
-    // ── 2. Membership bypass ─────────────────────────────
+    // 2. Membership bypass
     const user = getUserFromStorage()
     if (user && isMembershipActive(user.membership_type, user.membership_expired_at)) {
+      setAccessMode("membership")
       setVerifyState("membership")
-      // Fetch token info just to get showId
       const info = await fetchTokenInfo()
       if (info) setTokenInfo(info)
-      // findShow: use showId from token if available, else pick best
       const s = await findShow(info?.show_id ?? null)
       if (s) { setShow(s); fetchStream(s.showId) }
       return
     }
 
-    // ── 3. Fetch token info ──────────────────────────────
+    // 3. Fetch token info
     const info = await fetchTokenInfo()
     if (!info) {
       setErrorMsg("Token tidak ditemukan")
@@ -777,30 +1098,18 @@ export default function LiveTokenPage() {
       setVerifyState("denied"); return
     }
 
-    // ── 4. Find show (showId from token OR best available)
+    // 4. Find show
     const s = await findShow(info.show_id)
     if (s) setShow(s)
 
     const status = s?.status ?? "scheduled"
 
-    if (status === "live") {
+    if (status === "live" || status === "ended") {
       setVerifyState("verifying")
       const ok = await consumeToken(info)
       if (ok) {
         consumedRef.current = true
-        setVerifyState("granted")
-        if (s) fetchStream(s.showId)
-      } else {
-        setVerifyState("denied")
-      }
-      return
-    }
-
-    if (status === "ended") {
-      setVerifyState("verifying")
-      const ok = await consumeToken(info)
-      if (ok) {
-        consumedRef.current = true
+        setAccessMode("token")
         setVerifyState("granted")
         if (s) fetchStream(s.showId)
       } else {
@@ -811,7 +1120,7 @@ export default function LiveTokenPage() {
 
     // scheduled or unknown → wait, don't consume yet
     setVerifyState("waiting_live")
-  }, [liveId, isMembRoute, fetchTokenInfo, findShow, fetchStream, consumeToken])
+  }, [liveId, isMembRoute, hasTokenInUrl, fetchTokenInfo, findShow, fetchStream, consumeToken])
 
   // ── Initial run ─────────────────────────────────────────
   useEffect(() => { runVerification() }, [runVerification])
@@ -839,6 +1148,7 @@ export default function LiveTokenPage() {
         const ok = await consumeToken(info)
         if (ok) {
           consumedRef.current = true
+          setAccessMode("token")
           setVerifyState("granted")
           fetchStream(current.showId)
         } else {
@@ -854,7 +1164,23 @@ export default function LiveTokenPage() {
   const user     = typeof window !== "undefined" ? getUserFromStorage() : null
   const isMember = isMembershipActive(user?.membership_type, user?.membership_expired_at)
 
-  if (verifyState !== "granted" && verifyState !== "membership") {
+  // ── Form email (no token, no session) ───────────────────
+  if (verifyState === "email_form") {
+    return (
+      <EmailAccessForm
+        show={show}
+        onSuccess={handleEmailAccessGranted}
+      />
+    )
+  }
+
+  // ── States yang perlu VerifyScreen ──────────────────────
+  const isVerifyScreen =
+    verifyState !== "granted" &&
+    verifyState !== "membership" &&
+    verifyState !== "email_access"
+
+  if (isVerifyScreen) {
     return (
       <VerifyScreen
         state={verifyState}
@@ -864,10 +1190,12 @@ export default function LiveTokenPage() {
         liveId={liveId}
         errorMsg={errorMsg}
         onRetry={runVerification}
+        onUseEmail={() => setVerifyState("email_form")}
       />
     )
   }
 
+  // ── Loading show ────────────────────────────────────────
   if (!show) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-[#0a0a0a]">
@@ -888,6 +1216,9 @@ export default function LiveTokenPage() {
       liveId={liveId}
       isMember={isMember}
       user={user}
+      accessMode={accessMode}
+      accessEmail={accessEmail}
+      onSignOutEmail={accessMode === "email" ? handleSignOutEmail : undefined}
     />
   )
 }

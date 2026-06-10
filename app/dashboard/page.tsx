@@ -1,3 +1,4 @@
+"use client
 
 import { useAuth, fetchWithAuth } from "@/hooks/useAuth"
 import { useEffect, useState, useCallback } from "react"

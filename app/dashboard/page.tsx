@@ -696,7 +696,7 @@ const fetchMembershipPlans = useCallback(async () => {
     if (data.status !== false) setMembershipPlans(data.data || [])
   } catch (_) {}
   setPlansLoading(false)
-}, [isAdmin]))
+}, [isAdmin])
 
   const fetchResellerApps = useCallback(async () => {
     if (!isAdmin) return

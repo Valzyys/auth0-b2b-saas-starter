@@ -8,6 +8,7 @@ import {
   CalendarDays,
   CreditCard,
   Radio,
+  PlaySquare,
   Settings,
   LogOut,
   Menu,
@@ -32,13 +33,10 @@ function isMembershipActive(type?: string, expiredAt?: string | null): boolean {
 }
 
 async function fetchWithAuth(url: string) {
-  // Ambil token dari cookie atau localStorage (sama persis seperti di halaman lain)
   let token: string | null = null
   try {
-    // coba localStorage dulu
     const ls = localStorage.getItem("t48_auth")
     if (ls) { const p = JSON.parse(ls); if (p?.access_token) token = p.access_token }
-    // fallback ke cookie
     if (!token) {
       const m = document.cookie.match(/(?:^|;\s*)t48_access_token=([^;]*)/)
       if (m) token = decodeURIComponent(m[1])
@@ -51,17 +49,24 @@ async function fetchWithAuth(url: string) {
   return res.json()
 }
 
-// ─── Hook: resolve live URL ───────────────────────────────────
-// Return: "/live/memb" | "/live/T48-XXXXX" | "/live/show" (fallback)
-function useLiveUrl(userId: string | undefined) {
-  const [liveUrl,   setLiveUrl]   = useState<string | null>(null)
+// ─── Shared resolver (dipakai oleh live & replay) ────────────
+interface ResolvedUrl {
+  url: string | null
+  resolving: boolean
+}
+
+function useResolvedNavUrl(
+  userId: string | undefined,
+  paths: { memb: string; ticket: (tokenId: string) => string; fallback: string }
+): ResolvedUrl & { refresh: () => void } {
+  const [url,       setUrl]       = useState<string | null>(null)
   const [resolving, setResolving] = useState(false)
 
   const resolve = useCallback(async () => {
-    if (!userId) { setLiveUrl("/live/show"); return }
+    if (!userId) { setUrl(paths.fallback); return }
     setResolving(true)
     try {
-      // 1. Cek membership dari profile
+      // 1. Cek membership
       const profile = await fetchWithAuth(
         `${API_BASE}/profile/me?apikey=${API_KEY}`
       )
@@ -72,7 +77,7 @@ function useLiveUrl(userId: string | undefined) {
           profile.data?.membership_expired_at
         )
       ) {
-        setLiveUrl("/live/memb")
+        setUrl(paths.memb)
         return
       }
 
@@ -81,7 +86,6 @@ function useLiveUrl(userId: string | undefined) {
         `${API_BASE}/ticket/my-tickets?apikey=${API_KEY}`
       )
       if (tickets?.status && tickets.data?.tickets?.length > 0) {
-        // Ambil ticket yang valid dan belum expired, prioritaskan yang scheduled/live
         const valid = (tickets.data.tickets as {
           is_valid: boolean
           is_token_expired: boolean
@@ -90,32 +94,31 @@ function useLiveUrl(userId: string | undefined) {
         }[]).filter(t => t.is_valid && !t.is_token_expired)
 
         if (valid.length > 0) {
-          // Sort: yang paling dekat waktunya duluan
           const sorted = valid.sort((a, b) => {
             const ta = a.scheduled_at ? new Date(a.scheduled_at).getTime() : 0
             const tb = b.scheduled_at ? new Date(b.scheduled_at).getTime() : 0
             return tb - ta
           })
-          setLiveUrl(`/live/${sorted[0].live_token_id}`)
+          setUrl(paths.ticket(sorted[0].live_token_id))
           return
         }
       }
 
-      // 3. Fallback — halaman daftar show publik
-      setLiveUrl("/live/show")
+      // 3. Fallback
+      setUrl(paths.fallback)
     } catch {
-      setLiveUrl("/live/show")
+      setUrl(paths.fallback)
     } finally {
       setResolving(false)
     }
-  }, [userId])
+  }, [userId, paths.memb, paths.fallback])
 
   useEffect(() => { resolve() }, [resolve])
 
-  return { liveUrl, resolving, refresh: resolve }
+  return { url, resolving, refresh: resolve }
 }
 
-// ─── Nav items (Live di-resolve secara dinamis) ───────────────
+// ─── Nav items ────────────────────────────────────────────────
 const STATIC_NAV = [
   { href: "/dashboard",            label: "Home",       icon: LayoutDashboard },
   { href: "/dashboard/show",       label: "Jadwal",     icon: CalendarDays },
@@ -134,9 +137,28 @@ export default function DashboardLayout({
 
   const [mobileOpen,  setMobileOpen]  = useState(false)
   const [desktopOpen, setDesktopOpen] = useState(true)
-  const [liveLoading, setLiveLoading] = useState(false)
+  const [liveLoading,   setLiveLoading]   = useState(false)
+  const [replayLoading, setReplayLoading] = useState(false)
 
-  const { liveUrl, resolving } = useLiveUrl(user?.user_id)
+  // ── Live URL resolver ──────────────────────────────────────
+  const {
+    url: liveUrl,
+    resolving: liveResolving,
+  } = useResolvedNavUrl(user?.user_id, {
+    memb:     "/live/memb",
+    ticket:   (id) => `/live/${id}`,
+    fallback: "/live/show",
+  })
+
+  // ── Replay URL resolver ────────────────────────────────────
+  const {
+    url: replayUrl,
+    resolving: replayResolving,
+  } = useResolvedNavUrl(user?.user_id, {
+    memb:     "/replay/memb",
+    ticket:   (id) => `/replay/${id}`,
+    fallback: "/replay/show",
+  })
 
   if (loading || !user) {
     return (
@@ -149,7 +171,7 @@ export default function DashboardLayout({
   // ── Live nav click handler ─────────────────────────────────
   const handleLiveClick = async (e: React.MouseEvent) => {
     e.preventDefault()
-    if (resolving) return // masih loading, abaikan
+    if (liveResolving) return
 
     if (liveUrl) {
       setMobileOpen(false)
@@ -157,14 +179,33 @@ export default function DashboardLayout({
       return
     }
 
-    // Kalau liveUrl belum ready (harusnya jarang), trigger resolve lagi
     setLiveLoading(true)
     try {
-      // Tunggu sebentar lalu push ke fallback
       await new Promise(r => setTimeout(r, 800))
       router.push("/live/show")
     } finally {
       setLiveLoading(false)
+      setMobileOpen(false)
+    }
+  }
+
+  // ── Replay nav click handler ───────────────────────────────
+  const handleReplayClick = async (e: React.MouseEvent) => {
+    e.preventDefault()
+    if (replayResolving) return
+
+    if (replayUrl) {
+      setMobileOpen(false)
+      router.push(replayUrl)
+      return
+    }
+
+    setReplayLoading(true)
+    try {
+      await new Promise(r => setTimeout(r, 800))
+      router.push("/replay/show")
+    } finally {
+      setReplayLoading(false)
       setMobileOpen(false)
     }
   }
@@ -197,27 +238,38 @@ export default function DashboardLayout({
     )
   }
 
-  // ── Live nav button (dynamic) ───────────────────────────────
-  const LiveNavButton = ({ collapsed }: { collapsed?: boolean }) => {
-    const isLivePage = pathname.startsWith("/live")
-    const busy = resolving || liveLoading
-
-    // Badge berdasarkan liveUrl yang sudah di-resolve
-    const badge = !busy && liveUrl
-      ? liveUrl === "/live/memb"
-        ? { label: "MBR", cls: "bg-blue-500/20 text-blue-300" }
-        : liveUrl !== "/live/show"
-          ? { label: "TKT", cls: "bg-green-500/20 text-green-300" }
-          : null
-      : null
+  // ── Shared dynamic nav button ───────────────────────────────
+  const DynamicNavButton = ({
+    collapsed,
+    icon: Icon,
+    label,
+    resolving,
+    loading: btnLoading,
+    resolvedUrl,
+    basePath,
+    badge,
+    onClick,
+  }: {
+    collapsed?:   boolean
+    icon:         React.ElementType
+    label:        string
+    resolving:    boolean
+    loading:      boolean
+    resolvedUrl:  string | null
+    basePath:     string   // e.g. "/live" | "/replay"
+    badge:        { label: string; cls: string } | null
+    onClick:      (e: React.MouseEvent) => void
+  }) => {
+    const isActive = pathname.startsWith(basePath)
+    const busy     = resolving || btnLoading
 
     return (
       <button
-        onClick={handleLiveClick}
-        title={collapsed ? "Live" : undefined}
+        onClick={onClick}
+        title={collapsed ? label : undefined}
         disabled={busy}
         className={`flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors disabled:opacity-60 ${
-          isLivePage
+          isActive
             ? "bg-primary text-primary-foreground"
             : "text-muted-foreground hover:bg-accent hover:text-foreground"
         } ${collapsed ? "justify-center px-2" : ""}`}
@@ -225,27 +277,40 @@ export default function DashboardLayout({
         {busy ? (
           <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
         ) : (
-          <Radio className="h-4 w-4 shrink-0" />
+          <Icon className="h-4 w-4 shrink-0" />
         )}
 
         {!collapsed && (
           <>
-            <span className="flex-1 text-left">Live</span>
+            <span className="flex-1 text-left">{label}</span>
 
-            {/* Badge membership/tiket */}
             {badge && (
               <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${badge.cls}`}>
                 {badge.label}
               </span>
             )}
 
-            {isLivePage && !badge && (
+            {isActive && !badge && (
               <ChevronRight className="h-3.5 w-3.5 opacity-60" />
             )}
           </>
         )}
       </button>
     )
+  }
+
+  // ── Badge resolver helper ───────────────────────────────────
+  function resolveBadge(
+    resolving: boolean,
+    loading:   boolean,
+    url:       string | null,
+    fallback:  string,
+    membPath:  string,
+  ) {
+    if (resolving || loading || !url) return null
+    if (url === membPath)  return { label: "MBR", cls: "bg-blue-500/20 text-blue-300" }
+    if (url !== fallback)  return { label: "TKT", cls: "bg-green-500/20 text-green-300" }
+    return null
   }
 
   // ── Sidebar content ─────────────────────────────────────────
@@ -282,7 +347,32 @@ export default function DashboardLayout({
         {STATIC_NAV.map(item => (
           <NavLink key={item.href} {...item} collapsed={collapsed} />
         ))}
-        <LiveNavButton collapsed={collapsed} />
+
+        {/* Live */}
+        <DynamicNavButton
+          collapsed={collapsed}
+          icon={Radio}
+          label="Live"
+          resolving={liveResolving}
+          loading={liveLoading}
+          resolvedUrl={liveUrl}
+          basePath="/live"
+          badge={resolveBadge(liveResolving, liveLoading, liveUrl, "/live/show", "/live/memb")}
+          onClick={handleLiveClick}
+        />
+
+        {/* Replay */}
+        <DynamicNavButton
+          collapsed={collapsed}
+          icon={PlaySquare}
+          label="Replay"
+          resolving={replayResolving}
+          loading={replayLoading}
+          resolvedUrl={replayUrl}
+          basePath="/replay"
+          badge={resolveBadge(replayResolving, replayLoading, replayUrl, "/replay/show", "/replay/memb")}
+          onClick={handleReplayClick}
+        />
       </nav>
 
       {/* Bottom */}

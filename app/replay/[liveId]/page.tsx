@@ -1,11 +1,12 @@
+
 "use client"
 
 import { useEffect, useState, useRef, useCallback } from "react"
 import { useParams } from "next/navigation"
 
 // ─── Constants ────────────────────────────────────────────────
-const API_BASE = "https://v5.jkt48connect.com/api/team48"
-const API_KEY  = "JKTCONNECT"
+const API_BASE  = "https://v5.jkt48connect.com/api/team48"
+const API_KEY   = "JKTCONNECT"
 const LS_PREFIX = "t48_replay_access_"
 
 // ─── Types ────────────────────────────────────────────────────
@@ -94,20 +95,32 @@ function writeCachedAccess(data: CachedAccess) {
   try { localStorage.setItem(`${LS_PREFIX}${data.liveId}`, JSON.stringify(data)) } catch {}
 }
 
+// YouTube embed URL — semua parameter untuk hide channel info, branding, suggestions
 function getYoutubeEmbedUrl(urlOrId: string | null): string | null {
   if (!urlOrId) return null
-  // Already an ID (11 chars alphanumeric)
+  const qs = new URLSearchParams({
+    autoplay:       "1",
+    rel:            "0",
+    modestbranding: "1",
+    showinfo:       "0",
+    iv_load_policy: "3",
+    disablekb:      "0",
+    fs:             "1",
+    cc_load_policy: "0",
+    playsinline:    "1",
+    color:          "white",
+  }).toString()
   if (/^[a-zA-Z0-9_-]{11}$/.test(urlOrId)) {
-    return `https://www.youtube.com/embed/${urlOrId}?autoplay=1&rel=0`
+    return `https://www.youtube.com/embed/${urlOrId}?${qs}`
   }
   const m = urlOrId.match(/(?:youtube\.com\/(?:watch\?v=|live\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})/)
-  if (m) return `https://www.youtube.com/embed/${m[1]}?autoplay=1&rel=0`
+  if (m) return `https://www.youtube.com/embed/${m[1]}?${qs}`
   return null
 }
 
 function formatDate(iso: string) {
   return new Date(iso).toLocaleDateString("id-ID", {
-    day: "numeric", month: "short", year: "numeric", timeZone: "Asia/Jakarta",
+    day: "numeric", month: "long", year: "numeric", timeZone: "Asia/Jakarta",
   })
 }
 
@@ -148,7 +161,6 @@ function VerifyScreen({
     <div className="flex min-h-screen items-center justify-center bg-[#0a0a0a] px-4">
       <div className="w-full max-w-sm space-y-6 text-center">
 
-        {/* Logo/header */}
         <div className="space-y-2">
           <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-white/5 ring-1 ring-white/10">
             <svg className="h-7 w-7 text-white/60" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -161,7 +173,6 @@ function VerifyScreen({
           </p>
         </div>
 
-        {/* checking / verifying */}
         {(state === "checking" || state === "verifying") && (
           <div className="space-y-3">
             <div className="mx-auto h-10 w-10 animate-spin rounded-full border-2 border-white/20 border-t-white" />
@@ -171,7 +182,6 @@ function VerifyScreen({
           </div>
         )}
 
-        {/* denied */}
         {state === "denied" && (
           <div className="space-y-4">
             <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-red-500/10 ring-1 ring-red-500/30">
@@ -202,7 +212,6 @@ function VerifyScreen({
           </div>
         )}
 
-        {/* error */}
         {state === "error" && (
           <div className="space-y-4">
             <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-yellow-500/10 ring-1 ring-yellow-500/30">
@@ -225,83 +234,130 @@ function VerifyScreen({
   )
 }
 
-// ─── Replay Player Modal ──────────────────────────────────────
-function ReplayPlayerModal({
+// ─── Replay Player View (full-screen, like live page) ─────────
+function ReplayPlayerView({
   replay,
-  onClose,
+  accessMode,
+  liveId,
+  user,
+  onBack,
 }: {
-  replay:  ReplayItem
-  onClose: () => void
+  replay:     ReplayItem
+  accessMode: "token" | "membership"
+  liveId:     string
+  user:       { username?: string } | null
+  onBack:     () => void
 }) {
   const embedUrl = getYoutubeEmbedUrl(replay.youtube_url)
   const hasHls   = !!replay.rtmp_url && !embedUrl
 
-  // Close on backdrop click
-  const handleBackdrop = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (e.target === e.currentTarget) onClose()
-  }
-
-  // Close on Escape
   useEffect(() => {
-    const handler = (e: KeyboardEvent) => { if (e.key === "Escape") onClose() }
+    const handler = (e: KeyboardEvent) => { if (e.key === "Escape") onBack() }
     window.addEventListener("keydown", handler)
     return () => window.removeEventListener("keydown", handler)
-  }, [onClose])
+  }, [onBack])
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm px-4"
-      onClick={handleBackdrop}
-    >
-      <div className="w-full max-w-3xl space-y-3">
-        {/* Header */}
-        <div className="flex items-center justify-between px-1">
-          <div className="min-w-0">
-            <p className="text-xs font-semibold uppercase tracking-widest text-white/40">Replay</p>
-            <h2 className="text-sm font-semibold text-white truncate">{replay.title}</h2>
-          </div>
+    <div className="min-h-screen bg-[#0a0a0a] text-white flex flex-col">
+
+      {/* Top bar */}
+      <header className="flex items-center justify-between px-4 py-3 border-b border-white/10 shrink-0">
+        <div className="flex items-center gap-3 min-w-0">
           <button
-            onClick={onClose}
-            className="ml-4 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white/10 text-white/60 hover:bg-white/20 hover:text-white transition-colors"
+            onClick={onBack}
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white/8 text-white/60 hover:bg-white/15 hover:text-white transition-colors"
           >
             <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
             </svg>
           </button>
+          <div className="min-w-0">
+            <p className="text-[10px] font-semibold uppercase tracking-widest text-white/30 leading-none mb-0.5">Replay</p>
+            <p className="text-sm font-semibold truncate leading-snug">{replay.title}</p>
+          </div>
         </div>
 
-        {/* Player */}
-        <div className="relative w-full overflow-hidden rounded-2xl bg-black" style={{ aspectRatio: "16/9" }}>
-          {embedUrl ? (
+        <div className="shrink-0">
+          {accessMode === "membership" ? (
+            <span className="flex items-center gap-1 rounded-full bg-blue-500/20 px-2.5 py-1 text-xs font-medium text-blue-300">
+              <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                  d="M9 12l2 2 4-4M7.835 4.697a3.42 3.42 0 001.946-.806 3.42 3.42 0 014.438 0 3.42 3.42 0 001.946.806 3.42 3.42 0 013.138 3.138 3.42 3.42 0 00.806 1.946 3.42 3.42 0 010 4.438 3.42 3.42 0 00-.806 1.946 3.42 3.42 0 01-3.138 3.138 3.42 3.42 0 00-1.946.806 3.42 3.42 0 01-4.438 0 3.42 3.42 0 00-1.946-.806 3.42 3.42 0 01-3.138-3.138 3.42 3.42 0 00-.806-1.946 3.42 3.42 0 010-4.438 3.42 3.42 0 00.806-1.946 3.42 3.42 0 013.138-3.138z" />
+              </svg>
+              Member
+            </span>
+          ) : (
+            <span className="flex items-center gap-1 rounded-full bg-green-500/20 px-2.5 py-1 text-xs font-medium text-green-300">
+              <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                  d="M15 5v2m0 4v2m0 4v2M5 5a2 2 0 00-2 2v3a2 2 0 110 4v3a2 2 0 002 2h14a2 2 0 002-2v-3a2 2 0 110-4V7a2 2 0 00-2-2H5z" />
+              </svg>
+              Tiket Aktif
+            </span>
+          )}
+        </div>
+      </header>
+
+      {/* Player */}
+      <div
+        className="relative w-full bg-black shrink-0 overflow-hidden"
+        style={{ aspectRatio: "16/9", maxHeight: "calc(100vh - 120px)" }}
+      >
+        {embedUrl ? (
+          <>
             <iframe
               src={embedUrl}
               className="absolute inset-0 h-full w-full"
               allow="autoplay; encrypted-media; fullscreen"
               allowFullScreen
+              style={{ border: "none" }}
             />
-          ) : hasHls ? (
-            <HlsPlayer
-              src={replay.rtmp_url!}
-              className="absolute inset-0 h-full w-full object-contain bg-black"
+            {/*
+              Mask layer: covers the top-left corner where YouTube renders
+              the channel avatar + name. pointer-events: none so controls
+              below (seek bar, volume) are still usable.
+              Sized proportionally — YT branding sits in roughly top-left 30% x 12%.
+            */}
+            <div
+              className="absolute top-0 left-0 bg-black pointer-events-none z-10"
+              style={{ width: "32%", height: "13%" }}
             />
-          ) : (
-            <div className="absolute inset-0 flex flex-col items-center justify-center gap-3">
-              {replay.thumbnail_url && (
-                <img src={replay.thumbnail_url} alt={replay.title}
-                  className="absolute inset-0 h-full w-full object-cover opacity-20" />
-              )}
-              <div className="relative z-10 flex flex-col items-center gap-2">
-                <svg className="h-10 w-10 text-white/30" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
-                    d="M15 10l4.553-2.069A1 1 0 0121 8.82v6.362a1 1 0 01-1.447.894L15 14M3 8a2 2 0 012-2h10a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V8z" />
-                </svg>
-                <p className="text-sm text-white/40">Video tidak tersedia</p>
-              </div>
+          </>
+        ) : hasHls ? (
+          <HlsPlayer
+            src={replay.rtmp_url!}
+            className="absolute inset-0 h-full w-full object-contain bg-black"
+          />
+        ) : (
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-3">
+            {replay.thumbnail_url && (
+              <img src={replay.thumbnail_url} alt={replay.title}
+                className="absolute inset-0 h-full w-full object-cover opacity-20" />
+            )}
+            <div className="relative z-10 flex flex-col items-center gap-2">
+              <svg className="h-10 w-10 text-white/30" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
+                  d="M15 10l4.553-2.069A1 1 0 0121 8.82v6.362a1 1 0 01-1.447.894L15 14M3 8a2 2 0 012-2h10a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V8z" />
+              </svg>
+              <p className="text-sm text-white/40">Video tidak tersedia</p>
             </div>
-          )}
-        </div>
+          </div>
+        )}
+      </div>
 
-        <p className="text-center text-xs text-white/25">{formatDate(replay.created_at)}</p>
+      {/* Info below player */}
+      <div className="px-4 py-4 border-b border-white/10 space-y-1">
+        <h1 className="text-base font-semibold leading-snug">{replay.title}</h1>
+        <p className="text-xs text-white/35">{formatDate(replay.created_at)}</p>
+      </div>
+
+      {/* Footer */}
+      <div className="px-4 py-3 mt-auto">
+        <p className="text-xs text-white/20">
+          {accessMode === "membership"
+            ? `Akses via membership · ${user?.username ?? "member"}`
+            : `Akses via tiket · ${liveId}`}
+        </p>
       </div>
     </div>
   )
@@ -313,16 +369,27 @@ function ReplayGrid({
   accessMode,
   liveId,
   user,
-  onSignOut,
 }: {
   replays:    ReplayItem[]
   accessMode: "token" | "membership"
   liveId:     string
   user:       { username?: string } | null
-  onSignOut?: () => void
 }) {
   const [activeReplay, setActiveReplay] = useState<ReplayItem | null>(null)
   const [search,       setSearch]       = useState("")
+
+  // When a replay is selected, render the full-screen player instead of the grid
+  if (activeReplay) {
+    return (
+      <ReplayPlayerView
+        replay={activeReplay}
+        accessMode={accessMode}
+        liveId={liveId}
+        user={user}
+        onBack={() => setActiveReplay(null)}
+      />
+    )
+  }
 
   const filtered = replays.filter(r =>
     r.title.toLowerCase().includes(search.toLowerCase())
@@ -418,7 +485,7 @@ function ReplayGrid({
                         className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
                       />
                     ) : (
-                      <div className="absolute inset-0 flex items-center justify-center bg-white/3">
+                      <div className="absolute inset-0 flex items-center justify-center">
                         <svg className="h-8 w-8 text-white/20" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
                             d="M15 10l4.553-2.069A1 1 0 0121 8.82v6.362a1 1 0 01-1.447.894L15 14M3 8a2 2 0 012-2h10a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V8z" />
@@ -426,19 +493,19 @@ function ReplayGrid({
                       </div>
                     )}
 
-                    {/* Overlay gradient */}
                     <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent" />
 
-                    {/* Play button */}
-                    <div className={`absolute inset-0 flex items-center justify-center transition-opacity ${hasVideo ? "opacity-0 group-hover:opacity-100" : "opacity-0"}`}>
-                      <div className="flex h-12 w-12 items-center justify-center rounded-full bg-white/90 shadow-lg">
-                        <svg className="h-5 w-5 translate-x-0.5 text-black" fill="currentColor" viewBox="0 0 24 24">
-                          <path d="M8 5v14l11-7z" />
-                        </svg>
+                    {/* Play button on hover */}
+                    {hasVideo && (
+                      <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                        <div className="flex h-12 w-12 items-center justify-center rounded-full bg-white/90 shadow-lg">
+                          <svg className="h-5 w-5 translate-x-0.5 text-black" fill="currentColor" viewBox="0 0 24 24">
+                            <path d="M8 5v14l11-7z" />
+                          </svg>
+                        </div>
                       </div>
-                    </div>
+                    )}
 
-                    {/* No video badge */}
                     {!hasVideo && (
                       <div className="absolute bottom-2 left-2">
                         <span className="rounded-md bg-black/60 px-2 py-0.5 text-[10px] font-medium text-white/40">
@@ -447,7 +514,6 @@ function ReplayGrid({
                       </div>
                     )}
 
-                    {/* YouTube badge */}
                     {replay.youtube_url && (
                       <div className="absolute bottom-2 right-2">
                         <span className="flex items-center gap-1 rounded-md bg-red-600/80 px-2 py-0.5 text-[10px] font-semibold text-white">
@@ -462,7 +528,7 @@ function ReplayGrid({
 
                   {/* Info */}
                   <div className="p-3 space-y-1">
-                    <p className="text-sm font-semibold text-white leading-snug line-clamp-2 group-hover:text-white transition-colors">
+                    <p className="text-sm font-semibold text-white leading-snug line-clamp-2">
                       {replay.title}
                     </p>
                     <p className="text-[11px] text-white/35">{formatDate(replay.created_at)}</p>
@@ -475,21 +541,13 @@ function ReplayGrid({
       </main>
 
       {/* Footer */}
-      <footer className="px-4 py-3 border-t border-white/10 flex items-center justify-between">
+      <footer className="px-4 py-3 border-t border-white/10">
         <p className="text-xs text-white/20">
           {accessMode === "membership"
             ? `Membership · ${user?.username ?? "member"}`
             : `Tiket · ${liveId}`}
         </p>
       </footer>
-
-      {/* Player modal */}
-      {activeReplay && (
-        <ReplayPlayerModal
-          replay={activeReplay}
-          onClose={() => setActiveReplay(null)}
-        />
-      )}
     </div>
   )
 }
@@ -499,19 +557,17 @@ export default function ReplayPage() {
   const params = useParams<{ liveId: string }>()
   const liveId = params?.liveId ?? ""
 
-  // /replay/memb → membership-only direct access
-  const isMembRoute  = liveId === "memb"
+  const isMembRoute   = liveId === "memb"
   const hasTokenInUrl = !!liveId && liveId !== "memb"
 
-  const [verifyState, setVerifyState] = useState<VerifyState>("checking")
-  const [tokenInfo,   setTokenInfo]   = useState<LiveTokenInfo | null>(null)
-  const [errorMsg,    setErrorMsg]    = useState("")
-  const [accessMode,  setAccessMode]  = useState<"token" | "membership">("token")
-  const [replays,     setReplays]     = useState<ReplayItem[]>([])
+  const [verifyState,    setVerifyState]    = useState<VerifyState>("checking")
+  const [tokenInfo,      setTokenInfo]      = useState<LiveTokenInfo | null>(null)
+  const [errorMsg,       setErrorMsg]       = useState("")
+  const [accessMode,     setAccessMode]     = useState<"token" | "membership">("token")
+  const [replays,        setReplays]        = useState<ReplayItem[]>([])
   const [loadingReplays, setLoadingReplays] = useState(false)
 
-  const user     = typeof window !== "undefined" ? getUserFromStorage() : null
-  const isMember = isMembershipActive(user?.membership_type, user?.membership_expired_at)
+  const user = typeof window !== "undefined" ? getUserFromStorage() : null
 
   // ── Fetch replays ───────────────────────────────────────
   const fetchReplays = useCallback(async () => {
@@ -558,7 +614,7 @@ export default function ReplayPage() {
   const runVerification = useCallback(async () => {
     setVerifyState("checking")
 
-    // Route: /replay/memb
+    // /replay/memb
     if (isMembRoute) {
       const u = getUserFromStorage()
       if (!u || !isMembershipActive(u.membership_type, u.membership_expired_at)) {
@@ -572,9 +628,8 @@ export default function ReplayPage() {
       return
     }
 
-    // Tidak ada token di URL
+    // Tidak ada token di URL — cek membership dulu
     if (!hasTokenInUrl) {
-      // Cek membership dulu
       const u = getUserFromStorage()
       if (u && isMembershipActive(u.membership_type, u.membership_expired_at)) {
         setAccessMode("membership")
@@ -587,9 +642,7 @@ export default function ReplayPage() {
       return
     }
 
-    // Ada token di URL
-
-    // 1. Membership bypass
+    // Ada token — membership bypass
     const u = getUserFromStorage()
     if (u && isMembershipActive(u.membership_type, u.membership_expired_at)) {
       setAccessMode("membership")
@@ -598,7 +651,7 @@ export default function ReplayPage() {
       return
     }
 
-    // 2. Cache hit
+    // Cache hit
     const cached = readCachedAccess(liveId)
     if (cached) {
       setAccessMode("token")
@@ -607,7 +660,7 @@ export default function ReplayPage() {
       return
     }
 
-    // 3. Fetch & validate token
+    // Fetch & validate token
     const info = await fetchTokenInfo()
     if (!info) {
       setErrorMsg("Token tidak ditemukan.")
@@ -616,11 +669,11 @@ export default function ReplayPage() {
     }
     setTokenInfo(info)
 
-    if (!info.is_active) { setErrorMsg("Token dinonaktifkan admin.");              setVerifyState("denied"); return }
-    if (info.is_expired)  { setErrorMsg("Token sudah expired.");                    setVerifyState("denied"); return }
+    if (!info.is_active) { setErrorMsg("Token dinonaktifkan admin.");                     setVerifyState("denied"); return }
+    if (info.is_expired)  { setErrorMsg("Token sudah expired.");                           setVerifyState("denied"); return }
     if (info.is_maxed)    { setErrorMsg(`Batas penggunaan token tercapai (${info.max_uses}x).`); setVerifyState("denied"); return }
 
-    // 4. Consume
+    // Consume
     setVerifyState("verifying")
     const ok = await consumeToken(info)
     if (ok) {
@@ -635,9 +688,7 @@ export default function ReplayPage() {
   useEffect(() => { runVerification() }, [runVerification])
 
   // ── Render ──────────────────────────────────────────────
-  const isVerifyScreen =
-    verifyState !== "granted" &&
-    verifyState !== "membership"
+  const isVerifyScreen = verifyState !== "granted" && verifyState !== "membership"
 
   if (isVerifyScreen) {
     return (

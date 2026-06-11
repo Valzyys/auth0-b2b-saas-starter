@@ -94,7 +94,6 @@ function writeCachedAccess(data: CachedAccess) {
   try { localStorage.setItem(`${LS_PREFIX}${data.liveId}`, JSON.stringify(data)) } catch {}
 }
 
-// Extract YouTube video ID dari URL atau ID langsung
 function extractYoutubeId(urlOrId: string | null): string | null {
   if (!urlOrId) return null
   if (/^[a-zA-Z0-9_-]{11}$/.test(urlOrId)) return urlOrId
@@ -109,8 +108,6 @@ function formatDate(iso: string) {
 }
 
 // ─── Plyr YouTube Player ──────────────────────────────────────
-// Menggunakan Plyr.js untuk hide semua branding YouTube
-// Render custom player UI di atas iframe YouTube
 function PlyrYoutubePlayer({ videoId, className }: { videoId: string; className?: string }) {
   const containerRef = useRef<HTMLDivElement>(null)
   const plyrRef      = useRef<any>(null)
@@ -118,7 +115,6 @@ function PlyrYoutubePlayer({ videoId, className }: { videoId: string; className?
   useEffect(() => {
     if (!videoId || !containerRef.current) return
 
-    // Load Plyr CSS
     const existingLink = document.getElementById("plyr-css")
     if (!existingLink) {
       const link = document.createElement("link")
@@ -128,7 +124,6 @@ function PlyrYoutubePlayer({ videoId, className }: { videoId: string; className?
       document.head.appendChild(link)
     }
 
-    // Inject custom CSS untuk override Plyr branding & style
     const existingStyle = document.getElementById("plyr-custom-css")
     if (!existingStyle) {
       const style = document.createElement("style")
@@ -143,28 +138,37 @@ function PlyrYoutubePlayer({ videoId, className }: { videoId: string; className?
         .plyr__control--overlaid:hover {
           background: rgba(255,255,255,0.25) !important;
         }
-        .plyr--full-ui input[type=range] {
-          color: #fff !important;
-        }
+        .plyr--full-ui input[type=range] { color: #fff !important; }
         .plyr__progress input[type=range]::-webkit-slider-thumb { background: #fff !important; }
         .plyr__volume input[type=range] { color: #fff !important; }
         .plyr__controls {
           background: linear-gradient(transparent, rgba(0,0,0,0.7)) !important;
           padding: 20px 10px 10px !important;
         }
-        /* Hide YouTube logo & title overlay yang muncul di iframe */
-        .plyr__video-wrapper iframe {
-          pointer-events: none !important;
+        .plyr__video-wrapper iframe { pointer-events: none !important; }
+        .plyr__video-wrapper { position: relative; }
+        /* Hide YouTube channel avatar + name (top-left overlay) */
+        .plyr__video-wrapper::before {
+          content: '';
+          position: absolute;
+          top: 0;
+          left: 0;
+          width: 200px;
+          height: 56px;
+          background: #000;
+          z-index: 2;
+          pointer-events: none;
         }
-        /* Block semua klik ke iframe supaya tidak bisa redirect ke YouTube */
-        .plyr__video-wrapper {
-          position: relative;
-        }
+        /* Hide YouTube logo / top-right branding overlay */
         .plyr__video-wrapper::after {
           content: '';
           position: absolute;
-          inset: 0;
-          z-index: 1;
+          top: 0;
+          right: 0;
+          width: 140px;
+          height: 56px;
+          background: #000;
+          z-index: 2;
           pointer-events: none;
         }
       `
@@ -173,7 +177,6 @@ function PlyrYoutubePlayer({ videoId, className }: { videoId: string; className?
 
     let destroyed = false
 
-    // Load Plyr script
     const loadPlyr = async () => {
       // @ts-ignore
       if (window.Plyr) {
@@ -189,7 +192,6 @@ function PlyrYoutubePlayer({ videoId, className }: { videoId: string; className?
     const initPlyr = () => {
       if (!containerRef.current || destroyed) return
 
-      // Buat elemen div untuk Plyr
       const wrapper = containerRef.current
       wrapper.innerHTML = `<div class="plyr__video-embed" id="plyr-target">
         <iframe
@@ -203,15 +205,14 @@ function PlyrYoutubePlayer({ videoId, className }: { videoId: string; className?
 
       // @ts-ignore
       plyrRef.current = new window.Plyr("#plyr-target", {
-        autoplay:   true,
+        autoplay: true,
         youtube: {
-          noCookie:        true,
-          rel:             0,
-          showinfo:        0,
-          iv_load_policy:  3,
-          modestbranding:  1,
-          // Matikan semua info overlay YouTube
-          origin: window.location.origin,
+          noCookie:       true,
+          rel:            0,
+          showinfo:       0,
+          iv_load_policy: 3,
+          modestbranding: 1,
+          origin:         window.location.origin,
         },
         controls: [
           "play-large",
@@ -225,13 +226,11 @@ function PlyrYoutubePlayer({ videoId, className }: { videoId: string; className?
           "settings",
           "fullscreen",
         ],
-        settings: ["quality", "speed"],
-        // Sembunyikan semua elemen branded
-        hideControls: false,
-        resetOnEnd:   false,
+        settings:           ["quality", "speed"],
+        hideControls:       false,
+        resetOnEnd:         false,
         disableContextMenu: true,
-        // Poster dari YouTube thumbnail
-        poster: `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg`,
+        poster:             `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg`,
       })
     }
 
@@ -387,7 +386,7 @@ function ReplayPlayerView({
   }, [onBack])
 
   return (
-    <div className="min-h-screen bg-[#0a0a0a] text-white flex flex-col">
+    <div className="h-screen bg-[#0a0a0a] text-white flex flex-col overflow-hidden">
 
       {/* Top bar */}
       <header className="flex items-center justify-between px-4 py-3 border-b border-white/10 shrink-0">
@@ -427,50 +426,53 @@ function ReplayPlayerView({
         </div>
       </header>
 
-      {/* Player */}
-      <div
-        className="relative w-full bg-black shrink-0 overflow-hidden"
-        style={{ aspectRatio: "16/9", maxHeight: "calc(100vh - 120px)" }}
-      >
-        {youtubeId ? (
-          // Plyr player — hide semua YouTube branding, hanya tampilkan video + custom controls
-          <div className="absolute inset-0">
-            <PlyrYoutubePlayer
-              videoId={youtubeId}
-              className="absolute inset-0 h-full w-full"
-            />
-          </div>
-        ) : hasHls ? (
-          <HlsPlayer
-            src={replay.rtmp_url!}
-            className="absolute inset-0 h-full w-full object-contain bg-black"
-          />
-        ) : (
-          <div className="absolute inset-0 flex flex-col items-center justify-center gap-3">
-            {replay.thumbnail_url && (
-              <img src={replay.thumbnail_url} alt={replay.title}
-                className="absolute inset-0 h-full w-full object-cover opacity-20" />
-            )}
-            <div className="relative z-10 flex flex-col items-center gap-2">
-              <svg className="h-10 w-10 text-white/30" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
-                  d="M15 10l4.553-2.069A1 1 0 0121 8.82v6.362a1 1 0 01-1.447.894L15 14M3 8a2 2 0 012-2h10a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V8z" />
-              </svg>
-              <p className="text-sm text-white/40">Video tidak tersedia</p>
+      {/* Player — fills remaining height, centers with aspect ratio constraint */}
+      <div className="flex-1 flex flex-col justify-start bg-black overflow-hidden">
+        <div
+          className="relative w-full bg-black overflow-hidden"
+          style={{
+            aspectRatio: "16/9",
+            maxHeight:   "calc(100vh - 120px)",
+            maxWidth:    "calc((100vh - 120px) * 16 / 9)",
+            margin:      "0 auto",
+            width:       "100%",
+          }}
+        >
+          {youtubeId ? (
+            <div className="absolute inset-0">
+              <PlyrYoutubePlayer
+                videoId={youtubeId}
+                className="absolute inset-0 h-full w-full"
+              />
             </div>
-          </div>
-        )}
+          ) : hasHls ? (
+            <HlsPlayer
+              src={replay.rtmp_url!}
+              className="absolute inset-0 h-full w-full object-contain bg-black"
+            />
+          ) : (
+            <div className="absolute inset-0 flex flex-col items-center justify-center gap-3">
+              {replay.thumbnail_url && (
+                <img src={replay.thumbnail_url} alt={replay.title}
+                  className="absolute inset-0 h-full w-full object-cover opacity-20" />
+              )}
+              <div className="relative z-10 flex flex-col items-center gap-2">
+                <svg className="h-10 w-10 text-white/30" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
+                    d="M15 10l4.553-2.069A1 1 0 0121 8.82v6.362a1 1 0 01-1.447.894L15 14M3 8a2 2 0 012-2h10a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V8z" />
+                </svg>
+                <p className="text-sm text-white/40">Video tidak tersedia</p>
+              </div>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Info below player */}
-      <div className="px-4 py-4 border-b border-white/10 space-y-1">
-        <h1 className="text-base font-semibold leading-snug">{replay.title}</h1>
+      <div className="px-4 py-3 border-t border-white/10 shrink-0 space-y-0.5">
+        <h1 className="text-sm font-semibold leading-snug">{replay.title}</h1>
         <p className="text-xs text-white/35">{formatDate(replay.created_at)}</p>
-      </div>
-
-      {/* Footer */}
-      <div className="px-4 py-3 mt-auto">
-        <p className="text-xs text-white/20">
+        <p className="text-xs text-white/20 pt-1">
           {accessMode === "membership"
             ? `Akses via membership · ${user?.username ?? "member"}`
             : `Akses via tiket · ${liveId}`}
@@ -764,8 +766,8 @@ export default function ReplayPage() {
     }
     setTokenInfo(info)
 
-    if (!info.is_active) { setErrorMsg("Token dinonaktifkan admin.");                          setVerifyState("denied"); return }
-    if (info.is_expired)  { setErrorMsg("Token sudah expired.");                                setVerifyState("denied"); return }
+    if (!info.is_active) { setErrorMsg("Token dinonaktifkan admin.");                           setVerifyState("denied"); return }
+    if (info.is_expired)  { setErrorMsg("Token sudah expired.");                                 setVerifyState("denied"); return }
     if (info.is_maxed)    { setErrorMsg(`Batas penggunaan token tercapai (${info.max_uses}x).`); setVerifyState("denied"); return }
 
     setVerifyState("verifying")

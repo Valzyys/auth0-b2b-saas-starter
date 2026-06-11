@@ -1,4 +1,3 @@
-
 "use client"
 
 import { useEffect, useState, useRef, useCallback } from "react"
@@ -95,33 +94,163 @@ function writeCachedAccess(data: CachedAccess) {
   try { localStorage.setItem(`${LS_PREFIX}${data.liveId}`, JSON.stringify(data)) } catch {}
 }
 
-// YouTube embed URL — semua parameter untuk hide channel info, branding, suggestions
-function getYoutubeEmbedUrl(urlOrId: string | null): string | null {
+// Extract YouTube video ID dari URL atau ID langsung
+function extractYoutubeId(urlOrId: string | null): string | null {
   if (!urlOrId) return null
-  const qs = new URLSearchParams({
-    autoplay:       "1",
-    rel:            "0",
-    modestbranding: "1",
-    showinfo:       "0",
-    iv_load_policy: "3",
-    disablekb:      "0",
-    fs:             "1",
-    cc_load_policy: "0",
-    playsinline:    "1",
-    color:          "white",
-  }).toString()
-  if (/^[a-zA-Z0-9_-]{11}$/.test(urlOrId)) {
-    return `https://www.youtube.com/embed/${urlOrId}?${qs}`
-  }
+  if (/^[a-zA-Z0-9_-]{11}$/.test(urlOrId)) return urlOrId
   const m = urlOrId.match(/(?:youtube\.com\/(?:watch\?v=|live\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})/)
-  if (m) return `https://www.youtube.com/embed/${m[1]}?${qs}`
-  return null
+  return m ? m[1] : null
 }
 
 function formatDate(iso: string) {
   return new Date(iso).toLocaleDateString("id-ID", {
     day: "numeric", month: "long", year: "numeric", timeZone: "Asia/Jakarta",
   })
+}
+
+// ─── Plyr YouTube Player ──────────────────────────────────────
+// Menggunakan Plyr.js untuk hide semua branding YouTube
+// Render custom player UI di atas iframe YouTube
+function PlyrYoutubePlayer({ videoId, className }: { videoId: string; className?: string }) {
+  const containerRef = useRef<HTMLDivElement>(null)
+  const plyrRef      = useRef<any>(null)
+
+  useEffect(() => {
+    if (!videoId || !containerRef.current) return
+
+    // Load Plyr CSS
+    const existingLink = document.getElementById("plyr-css")
+    if (!existingLink) {
+      const link = document.createElement("link")
+      link.id   = "plyr-css"
+      link.rel  = "stylesheet"
+      link.href = "https://cdn.plyr.io/3.7.8/plyr.css"
+      document.head.appendChild(link)
+    }
+
+    // Inject custom CSS untuk override Plyr branding & style
+    const existingStyle = document.getElementById("plyr-custom-css")
+    if (!existingStyle) {
+      const style = document.createElement("style")
+      style.id = "plyr-custom-css"
+      style.textContent = `
+        .plyr--youtube .plyr__poster { background-size: cover; }
+        .plyr__control--overlaid {
+          background: rgba(255,255,255,0.15) !important;
+          border: 1px solid rgba(255,255,255,0.2) !important;
+          backdrop-filter: blur(8px) !important;
+        }
+        .plyr__control--overlaid:hover {
+          background: rgba(255,255,255,0.25) !important;
+        }
+        .plyr--full-ui input[type=range] {
+          color: #fff !important;
+        }
+        .plyr__progress input[type=range]::-webkit-slider-thumb { background: #fff !important; }
+        .plyr__volume input[type=range] { color: #fff !important; }
+        .plyr__controls {
+          background: linear-gradient(transparent, rgba(0,0,0,0.7)) !important;
+          padding: 20px 10px 10px !important;
+        }
+        /* Hide YouTube logo & title overlay yang muncul di iframe */
+        .plyr__video-wrapper iframe {
+          pointer-events: none !important;
+        }
+        /* Block semua klik ke iframe supaya tidak bisa redirect ke YouTube */
+        .plyr__video-wrapper {
+          position: relative;
+        }
+        .plyr__video-wrapper::after {
+          content: '';
+          position: absolute;
+          inset: 0;
+          z-index: 1;
+          pointer-events: none;
+        }
+      `
+      document.head.appendChild(style)
+    }
+
+    let destroyed = false
+
+    // Load Plyr script
+    const loadPlyr = async () => {
+      // @ts-ignore
+      if (window.Plyr) {
+        initPlyr()
+        return
+      }
+      const script = document.createElement("script")
+      script.src   = "https://cdn.plyr.io/3.7.8/plyr.polyfilled.js"
+      script.onload = () => { if (!destroyed) initPlyr() }
+      document.head.appendChild(script)
+    }
+
+    const initPlyr = () => {
+      if (!containerRef.current || destroyed) return
+
+      // Buat elemen div untuk Plyr
+      const wrapper = containerRef.current
+      wrapper.innerHTML = `<div class="plyr__video-embed" id="plyr-target">
+        <iframe
+          src="https://www.youtube-nocookie.com/embed/${videoId}?origin=${encodeURIComponent(window.location.origin)}&iv_load_policy=3&modestbranding=1&playsinline=1&showinfo=0&rel=0&enablejsapi=1"
+          allowfullscreen
+          allowtransparency
+          allow="autoplay"
+          style="border:none"
+        ></iframe>
+      </div>`
+
+      // @ts-ignore
+      plyrRef.current = new window.Plyr("#plyr-target", {
+        autoplay:   true,
+        youtube: {
+          noCookie:        true,
+          rel:             0,
+          showinfo:        0,
+          iv_load_policy:  3,
+          modestbranding:  1,
+          // Matikan semua info overlay YouTube
+          origin: window.location.origin,
+        },
+        controls: [
+          "play-large",
+          "play",
+          "progress",
+          "current-time",
+          "duration",
+          "mute",
+          "volume",
+          "captions",
+          "settings",
+          "fullscreen",
+        ],
+        settings: ["quality", "speed"],
+        // Sembunyikan semua elemen branded
+        hideControls: false,
+        resetOnEnd:   false,
+        disableContextMenu: true,
+        // Poster dari YouTube thumbnail
+        poster: `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg`,
+      })
+    }
+
+    loadPlyr()
+
+    return () => {
+      destroyed = true
+      try { plyrRef.current?.destroy() } catch {}
+      if (containerRef.current) containerRef.current.innerHTML = ""
+    }
+  }, [videoId])
+
+  return (
+    <div
+      ref={containerRef}
+      className={className}
+      style={{ width: "100%", height: "100%" }}
+    />
+  )
 }
 
 // ─── HLS Player ───────────────────────────────────────────────
@@ -234,7 +363,7 @@ function VerifyScreen({
   )
 }
 
-// ─── Replay Player View (full-screen, like live page) ─────────
+// ─── Replay Player View ───────────────────────────────────────
 function ReplayPlayerView({
   replay,
   accessMode,
@@ -248,8 +377,8 @@ function ReplayPlayerView({
   user:       { username?: string } | null
   onBack:     () => void
 }) {
-  const embedUrl = getYoutubeEmbedUrl(replay.youtube_url)
-  const hasHls   = !!replay.rtmp_url && !embedUrl
+  const youtubeId = extractYoutubeId(replay.youtube_url)
+  const hasHls    = !!replay.rtmp_url && !youtubeId
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => { if (e.key === "Escape") onBack() }
@@ -303,26 +432,14 @@ function ReplayPlayerView({
         className="relative w-full bg-black shrink-0 overflow-hidden"
         style={{ aspectRatio: "16/9", maxHeight: "calc(100vh - 120px)" }}
       >
-        {embedUrl ? (
-          <>
-            <iframe
-              src={embedUrl}
+        {youtubeId ? (
+          // Plyr player — hide semua YouTube branding, hanya tampilkan video + custom controls
+          <div className="absolute inset-0">
+            <PlyrYoutubePlayer
+              videoId={youtubeId}
               className="absolute inset-0 h-full w-full"
-              allow="autoplay; encrypted-media; fullscreen"
-              allowFullScreen
-              style={{ border: "none" }}
             />
-            {/*
-              Mask layer: covers the top-left corner where YouTube renders
-              the channel avatar + name. pointer-events: none so controls
-              below (seek bar, volume) are still usable.
-              Sized proportionally — YT branding sits in roughly top-left 30% x 12%.
-            */}
-            <div
-              className="absolute top-0 left-0 bg-black pointer-events-none z-10"
-              style={{ width: "32%", height: "13%" }}
-            />
-          </>
+          </div>
         ) : hasHls ? (
           <HlsPlayer
             src={replay.rtmp_url!}
@@ -378,7 +495,6 @@ function ReplayGrid({
   const [activeReplay, setActiveReplay] = useState<ReplayItem | null>(null)
   const [search,       setSearch]       = useState("")
 
-  // When a replay is selected, render the full-screen player instead of the grid
   if (activeReplay) {
     return (
       <ReplayPlayerView
@@ -495,7 +611,6 @@ function ReplayGrid({
 
                     <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent" />
 
-                    {/* Play button on hover */}
                     {hasVideo && (
                       <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
                         <div className="flex h-12 w-12 items-center justify-center rounded-full bg-white/90 shadow-lg">
@@ -510,17 +625,6 @@ function ReplayGrid({
                       <div className="absolute bottom-2 left-2">
                         <span className="rounded-md bg-black/60 px-2 py-0.5 text-[10px] font-medium text-white/40">
                           Tidak tersedia
-                        </span>
-                      </div>
-                    )}
-
-                    {replay.youtube_url && (
-                      <div className="absolute bottom-2 right-2">
-                        <span className="flex items-center gap-1 rounded-md bg-red-600/80 px-2 py-0.5 text-[10px] font-semibold text-white">
-                          <svg className="h-2.5 w-2.5" fill="currentColor" viewBox="0 0 24 24">
-                            <path d="M19.615 3.184c-3.604-.246-11.631-.245-15.23 0C.488 3.45.029 5.804 0 12c.029 6.185.484 8.549 4.385 8.816 3.6.245 11.626.246 15.23 0C23.512 20.55 23.971 18.196 24 12c-.029-6.185-.484-8.549-4.385-8.816zM9 16V8l8 3.993L9 16z"/>
-                          </svg>
-                          YouTube
                         </span>
                       </div>
                     )}
@@ -569,7 +673,6 @@ export default function ReplayPage() {
 
   const user = typeof window !== "undefined" ? getUserFromStorage() : null
 
-  // ── Fetch replays ───────────────────────────────────────
   const fetchReplays = useCallback(async () => {
     setLoadingReplays(true)
     try {
@@ -580,7 +683,6 @@ export default function ReplayPage() {
     finally { setLoadingReplays(false) }
   }, [])
 
-  // ── Fetch token info ────────────────────────────────────
   const fetchTokenInfo = useCallback(async (): Promise<LiveTokenInfo | null> => {
     try {
       const res  = await fetch(`${API_BASE}/live/${liveId}/info?apikey=${API_KEY}`)
@@ -589,7 +691,6 @@ export default function ReplayPage() {
     } catch { return null }
   }, [liveId])
 
-  // ── Consume token ───────────────────────────────────────
   const consumeToken = useCallback(async (info: LiveTokenInfo): Promise<boolean> => {
     try {
       const res  = await fetch(`${API_BASE}/live/${liveId}?apikey=${API_KEY}`)
@@ -610,11 +711,9 @@ export default function ReplayPage() {
     }
   }, [liveId])
 
-  // ── Core verification flow ──────────────────────────────
   const runVerification = useCallback(async () => {
     setVerifyState("checking")
 
-    // /replay/memb
     if (isMembRoute) {
       const u = getUserFromStorage()
       if (!u || !isMembershipActive(u.membership_type, u.membership_expired_at)) {
@@ -628,7 +727,6 @@ export default function ReplayPage() {
       return
     }
 
-    // Tidak ada token di URL — cek membership dulu
     if (!hasTokenInUrl) {
       const u = getUserFromStorage()
       if (u && isMembershipActive(u.membership_type, u.membership_expired_at)) {
@@ -642,7 +740,6 @@ export default function ReplayPage() {
       return
     }
 
-    // Ada token — membership bypass
     const u = getUserFromStorage()
     if (u && isMembershipActive(u.membership_type, u.membership_expired_at)) {
       setAccessMode("membership")
@@ -651,7 +748,6 @@ export default function ReplayPage() {
       return
     }
 
-    // Cache hit
     const cached = readCachedAccess(liveId)
     if (cached) {
       setAccessMode("token")
@@ -660,7 +756,6 @@ export default function ReplayPage() {
       return
     }
 
-    // Fetch & validate token
     const info = await fetchTokenInfo()
     if (!info) {
       setErrorMsg("Token tidak ditemukan.")
@@ -669,11 +764,10 @@ export default function ReplayPage() {
     }
     setTokenInfo(info)
 
-    if (!info.is_active) { setErrorMsg("Token dinonaktifkan admin.");                     setVerifyState("denied"); return }
-    if (info.is_expired)  { setErrorMsg("Token sudah expired.");                           setVerifyState("denied"); return }
+    if (!info.is_active) { setErrorMsg("Token dinonaktifkan admin.");                          setVerifyState("denied"); return }
+    if (info.is_expired)  { setErrorMsg("Token sudah expired.");                                setVerifyState("denied"); return }
     if (info.is_maxed)    { setErrorMsg(`Batas penggunaan token tercapai (${info.max_uses}x).`); setVerifyState("denied"); return }
 
-    // Consume
     setVerifyState("verifying")
     const ok = await consumeToken(info)
     if (ok) {
@@ -687,7 +781,6 @@ export default function ReplayPage() {
 
   useEffect(() => { runVerification() }, [runVerification])
 
-  // ── Render ──────────────────────────────────────────────
   const isVerifyScreen = verifyState !== "granted" && verifyState !== "membership"
 
   if (isVerifyScreen) {

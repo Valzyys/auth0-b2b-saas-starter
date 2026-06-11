@@ -41,12 +41,13 @@ interface CachedAccess {
 }
 
 type VerifyState =
-  | "checking"
-  | "verifying"
-  | "granted"
-  | "membership"
-  | "denied"
-  | "error"
+  | "input"       // user belum input token
+  | "checking"    // cek membership / cache
+  | "verifying"   // consume token ke API
+  | "granted"     // akses token berhasil
+  | "membership"  // akses via membership
+  | "denied"      // ditolak
+  | "error"       // error jaringan
 
 // ─── Helpers ──────────────────────────────────────────────────
 function getCookie(name: string): string | null {
@@ -135,9 +136,7 @@ function PlyrYoutubePlayer({ videoId, className }: { videoId: string; className?
           border: 1px solid rgba(255,255,255,0.2) !important;
           backdrop-filter: blur(8px) !important;
         }
-        .plyr__control--overlaid:hover {
-          background: rgba(255,255,255,0.25) !important;
-        }
+        .plyr__control--overlaid:hover { background: rgba(255,255,255,0.25) !important; }
         .plyr--full-ui input[type=range] { color: #fff !important; }
         .plyr__progress input[type=range]::-webkit-slider-thumb { background: #fff !important; }
         .plyr__volume input[type=range] { color: #fff !important; }
@@ -147,26 +146,20 @@ function PlyrYoutubePlayer({ videoId, className }: { videoId: string; className?
         }
         .plyr__video-wrapper iframe { pointer-events: none !important; }
         .plyr__video-wrapper { position: relative; }
-        /* Hide YouTube channel avatar + name (top-left overlay) */
         .plyr__video-wrapper::before {
           content: '';
           position: absolute;
-          top: 0;
-          left: 0;
-          width: 200px;
-          height: 56px;
+          top: 0; left: 0;
+          width: 200px; height: 56px;
           background: #000;
           z-index: 2;
           pointer-events: none;
         }
-        /* Hide YouTube logo / top-right branding overlay */
         .plyr__video-wrapper::after {
           content: '';
           position: absolute;
-          top: 0;
-          right: 0;
-          width: 140px;
-          height: 56px;
+          top: 0; right: 0;
+          width: 140px; height: 56px;
           background: #000;
           z-index: 2;
           pointer-events: none;
@@ -179,10 +172,7 @@ function PlyrYoutubePlayer({ videoId, className }: { videoId: string; className?
 
     const loadPlyr = async () => {
       // @ts-ignore
-      if (window.Plyr) {
-        initPlyr()
-        return
-      }
+      if (window.Plyr) { initPlyr(); return }
       const script = document.createElement("script")
       script.src   = "https://cdn.plyr.io/3.7.8/plyr.polyfilled.js"
       script.onload = () => { if (!destroyed) initPlyr() }
@@ -191,51 +181,27 @@ function PlyrYoutubePlayer({ videoId, className }: { videoId: string; className?
 
     const initPlyr = () => {
       if (!containerRef.current || destroyed) return
-
       const wrapper = containerRef.current
       wrapper.innerHTML = `<div class="plyr__video-embed" id="plyr-target">
         <iframe
           src="https://www.youtube-nocookie.com/embed/${videoId}?origin=${encodeURIComponent(window.location.origin)}&iv_load_policy=3&modestbranding=1&playsinline=1&showinfo=0&rel=0&enablejsapi=1"
-          allowfullscreen
-          allowtransparency
-          allow="autoplay"
-          style="border:none"
+          allowfullscreen allowtransparency allow="autoplay" style="border:none"
         ></iframe>
       </div>`
-
       // @ts-ignore
       plyrRef.current = new window.Plyr("#plyr-target", {
         autoplay: true,
-        youtube: {
-          noCookie:       true,
-          rel:            0,
-          showinfo:       0,
-          iv_load_policy: 3,
-          modestbranding: 1,
-          origin:         window.location.origin,
-        },
-        controls: [
-          "play-large",
-          "play",
-          "progress",
-          "current-time",
-          "duration",
-          "mute",
-          "volume",
-          "captions",
-          "settings",
-          "fullscreen",
-        ],
-        settings:           ["quality", "speed"],
-        hideControls:       false,
-        resetOnEnd:         false,
+        youtube: { noCookie: true, rel: 0, showinfo: 0, iv_load_policy: 3, modestbranding: 1, origin: window.location.origin },
+        controls: ["play-large","play","progress","current-time","duration","mute","volume","captions","settings","fullscreen"],
+        settings: ["quality","speed"],
+        hideControls: false,
+        resetOnEnd: false,
         disableContextMenu: true,
-        poster:             `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg`,
+        poster: `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg`,
       })
     }
 
     loadPlyr()
-
     return () => {
       destroyed = true
       try { plyrRef.current?.destroy() } catch {}
@@ -243,13 +209,7 @@ function PlyrYoutubePlayer({ videoId, className }: { videoId: string; className?
     }
   }, [videoId])
 
-  return (
-    <div
-      ref={containerRef}
-      className={className}
-      style={{ width: "100%", height: "100%" }}
-    />
-  )
+  return <div ref={containerRef} className={className} style={{ width: "100%", height: "100%" }} />
 }
 
 // ─── HLS Player ───────────────────────────────────────────────
@@ -271,19 +231,116 @@ function HlsPlayer({ src, className }: { src: string; className?: string }) {
   return <video ref={videoRef} className={className} controls autoPlay playsInline />
 }
 
-// ─── Verify Screen ────────────────────────────────────────────
-function VerifyScreen({
+// ─── Token Input Screen ───────────────────────────────────────
+function TokenInputScreen({
+  isMembRoute,
+  onSubmit,
+  onUseMembership,
+  hasMembership,
+}: {
+  isMembRoute:    boolean
+  onSubmit:       (token: string) => void
+  onUseMembership: () => void
+  hasMembership:  boolean
+}) {
+  const [value, setValue] = useState("")
+  const [err,   setErr]   = useState("")
+
+  const handleSubmit = () => {
+    const trimmed = value.trim()
+    if (!trimmed) { setErr("Masukkan token terlebih dahulu"); return }
+    setErr("")
+    onSubmit(trimmed)
+  }
+
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-[#0a0a0a] px-4">
+      <div className="w-full max-w-sm space-y-6">
+
+        {/* Header */}
+        <div className="space-y-2 text-center">
+          <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-white/5 ring-1 ring-white/10">
+            <svg className="h-7 w-7 text-white/60" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
+                d="M15 10l4.553-2.069A1 1 0 0121 8.82v6.362a1 1 0 01-1.447.894L15 14M3 8a2 2 0 012-2h10a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V8z" />
+            </svg>
+          </div>
+          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-white/30">JKT48 Replay</p>
+          <p className="text-base font-semibold text-white">Masukkan Token Tiket</p>
+          <p className="text-sm text-white/40">
+            Masukkan token tiket yang kamu miliki untuk mengakses replay show.
+          </p>
+        </div>
+
+        {/* Input */}
+        <div className="space-y-3">
+          <div className="space-y-1.5">
+            <label className="text-xs font-medium text-white/50">Token Tiket</label>
+            <input
+              type="text"
+              value={value}
+              onChange={e => { setValue(e.target.value); setErr("") }}
+              onKeyDown={e => { if (e.key === "Enter") handleSubmit() }}
+              placeholder="Contoh: T48-XXXXXXXX"
+              spellCheck={false}
+              autoComplete="off"
+              className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 font-mono text-sm text-white placeholder-white/20 outline-none focus:border-white/25 focus:bg-white/8 transition-colors"
+            />
+            {err && <p className="text-xs text-red-400">{err}</p>}
+          </div>
+
+          <button
+            onClick={handleSubmit}
+            className="w-full rounded-xl bg-white py-3 text-sm font-semibold text-black hover:bg-white/90 active:bg-white/80 transition-colors"
+          >
+            Akses Replay
+          </button>
+        </div>
+
+        {/* Divider */}
+        {hasMembership && (
+          <div className="space-y-3">
+            <div className="flex items-center gap-3">
+              <div className="flex-1 border-t border-white/10" />
+              <span className="text-xs text-white/25">atau</span>
+              <div className="flex-1 border-t border-white/10" />
+            </div>
+            <button
+              onClick={onUseMembership}
+              className="w-full rounded-xl border border-blue-500/30 bg-blue-500/10 py-3 text-sm font-medium text-blue-300 hover:bg-blue-500/15 transition-colors"
+            >
+              Lanjutkan dengan Membership
+            </button>
+          </div>
+        )}
+
+        {/* Info */}
+        <div className="rounded-xl border border-white/8 bg-white/3 px-4 py-3 space-y-1 text-xs text-white/30">
+          <p className="text-white/50 font-medium">Cara mendapatkan token:</p>
+          <p>· Beli tiket show di halaman <span className="text-white/50">Membership</span></p>
+          <p>· Token akan muncul di riwayat pembelian kamu</p>
+        </div>
+
+      </div>
+    </div>
+  )
+}
+
+// ─── Verify / Loading / Denied Screen ────────────────────────
+function StatusScreen({
   state,
   tokenInfo,
-  liveId,
+  tokenInput,
   errorMsg,
   onRetry,
+  onBack,
 }: {
-  state:     VerifyState
-  tokenInfo: LiveTokenInfo | null
-  liveId:    string
-  errorMsg:  string
-  onRetry:   () => void
+  state:      VerifyState
+  tokenInfo:  LiveTokenInfo | null
+  tokenInput: string
+  errorMsg:   string
+  onRetry:    () => void
+  onBack:     () => void
 }) {
   return (
     <div className="flex min-h-screen items-center justify-center bg-[#0a0a0a] px-4">
@@ -296,9 +353,7 @@ function VerifyScreen({
                 d="M15 10l4.553-2.069A1 1 0 0121 8.82v6.362a1 1 0 01-1.447.894L15 14M3 8a2 2 0 012-2h10a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V8z" />
             </svg>
           </div>
-          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-white/30">
-            JKT48 Replay
-          </p>
+          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-white/30">JKT48 Replay</p>
         </div>
 
         {(state === "checking" || state === "verifying") && (
@@ -320,22 +375,25 @@ function VerifyScreen({
             </div>
             <div className="space-y-1">
               <p className="font-semibold text-white">Akses Ditolak</p>
-              <p className="text-sm text-white/40">
-                {errorMsg || "Token tidak valid, sudah digunakan, atau expired."}
-              </p>
+              <p className="text-sm text-white/40">{errorMsg || "Token tidak valid, sudah digunakan, atau expired."}</p>
             </div>
             {tokenInfo && (
               <div className="rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-left space-y-1 text-xs text-white/40">
-                <p className="font-mono break-all">{liveId}</p>
+                <p className="font-mono break-all">{tokenInput}</p>
                 {tokenInfo.is_expired && <p className="text-red-400">⚠ Token sudah expired</p>}
                 {tokenInfo.is_maxed   && <p className="text-red-400">⚠ Batas penggunaan tercapai ({tokenInfo.max_uses}x)</p>}
                 {!tokenInfo.is_active && <p className="text-red-400">⚠ Token dinonaktifkan admin</p>}
               </div>
             )}
-            <div className="rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-xs text-white/40 text-left space-y-1">
-              <p className="text-white/60 font-medium">Cara mendapatkan akses:</p>
-              <p>· Gunakan live token yang valid di URL: <span className="font-mono text-white/50">/replay/[token]</span></p>
-              <p>· Atau aktifkan membership Team48</p>
+            <div className="flex gap-2">
+              <button onClick={onBack}
+                className="flex-1 rounded-xl border border-white/10 bg-white/5 py-2.5 text-sm font-medium text-white/60 hover:bg-white/10 transition-colors">
+                Ganti Token
+              </button>
+              <button onClick={onRetry}
+                className="flex-1 rounded-xl bg-white/10 py-2.5 text-sm font-medium text-white hover:bg-white/15 transition-colors">
+                Coba Lagi
+              </button>
             </div>
           </div>
         )}
@@ -350,10 +408,16 @@ function VerifyScreen({
             </div>
             <p className="font-semibold text-white">Terjadi Kesalahan</p>
             <p className="text-sm text-white/40">{errorMsg}</p>
-            <button onClick={onRetry}
-              className="w-full rounded-xl bg-white/10 py-2.5 text-sm font-medium text-white hover:bg-white/15 transition-colors">
-              Coba Lagi
-            </button>
+            <div className="flex gap-2">
+              <button onClick={onBack}
+                className="flex-1 rounded-xl border border-white/10 bg-white/5 py-2.5 text-sm font-medium text-white/60 hover:bg-white/10 transition-colors">
+                Ganti Token
+              </button>
+              <button onClick={onRetry}
+                className="flex-1 rounded-xl bg-white/10 py-2.5 text-sm font-medium text-white hover:bg-white/15 transition-colors">
+                Coba Lagi
+              </button>
+            </div>
           </div>
         )}
 
@@ -366,13 +430,13 @@ function VerifyScreen({
 function ReplayPlayerView({
   replay,
   accessMode,
-  liveId,
+  tokenInput,
   user,
   onBack,
 }: {
   replay:     ReplayItem
   accessMode: "token" | "membership"
-  liveId:     string
+  tokenInput: string
   user:       { username?: string } | null
   onBack:     () => void
 }) {
@@ -387,14 +451,10 @@ function ReplayPlayerView({
 
   return (
     <div className="h-screen bg-[#0a0a0a] text-white flex flex-col overflow-hidden">
-
-      {/* Top bar */}
       <header className="flex items-center justify-between px-4 py-3 border-b border-white/10 shrink-0">
         <div className="flex items-center gap-3 min-w-0">
-          <button
-            onClick={onBack}
-            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white/8 text-white/60 hover:bg-white/15 hover:text-white transition-colors"
-          >
+          <button onClick={onBack}
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white/8 text-white/60 hover:bg-white/15 hover:text-white transition-colors">
             <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
             </svg>
@@ -404,7 +464,6 @@ function ReplayPlayerView({
             <p className="text-sm font-semibold truncate leading-snug">{replay.title}</p>
           </div>
         </div>
-
         <div className="shrink-0">
           {accessMode === "membership" ? (
             <span className="flex items-center gap-1 rounded-full bg-blue-500/20 px-2.5 py-1 text-xs font-medium text-blue-300">
@@ -426,10 +485,8 @@ function ReplayPlayerView({
         </div>
       </header>
 
-      {/* Player — fills remaining height, centers with aspect ratio constraint */}
       <div className="flex-1 flex flex-col justify-start bg-black overflow-hidden">
-        <div
-          className="relative w-full bg-black overflow-hidden"
+        <div className="relative w-full bg-black overflow-hidden"
           style={{
             aspectRatio: "16/9",
             maxHeight:   "calc(100vh - 120px)",
@@ -440,16 +497,10 @@ function ReplayPlayerView({
         >
           {youtubeId ? (
             <div className="absolute inset-0">
-              <PlyrYoutubePlayer
-                videoId={youtubeId}
-                className="absolute inset-0 h-full w-full"
-              />
+              <PlyrYoutubePlayer videoId={youtubeId} className="absolute inset-0 h-full w-full" />
             </div>
           ) : hasHls ? (
-            <HlsPlayer
-              src={replay.rtmp_url!}
-              className="absolute inset-0 h-full w-full object-contain bg-black"
-            />
+            <HlsPlayer src={replay.rtmp_url!} className="absolute inset-0 h-full w-full object-contain bg-black" />
           ) : (
             <div className="absolute inset-0 flex flex-col items-center justify-center gap-3">
               {replay.thumbnail_url && (
@@ -468,14 +519,13 @@ function ReplayPlayerView({
         </div>
       </div>
 
-      {/* Info below player */}
       <div className="px-4 py-3 border-t border-white/10 shrink-0 space-y-0.5">
         <h1 className="text-sm font-semibold leading-snug">{replay.title}</h1>
         <p className="text-xs text-white/35">{formatDate(replay.created_at)}</p>
         <p className="text-xs text-white/20 pt-1">
           {accessMode === "membership"
             ? `Akses via membership · ${user?.username ?? "member"}`
-            : `Akses via tiket · ${liveId}`}
+            : `Akses via tiket · ${tokenInput}`}
         </p>
       </div>
     </div>
@@ -486,12 +536,12 @@ function ReplayPlayerView({
 function ReplayGrid({
   replays,
   accessMode,
-  liveId,
+  tokenInput,
   user,
 }: {
   replays:    ReplayItem[]
   accessMode: "token" | "membership"
-  liveId:     string
+  tokenInput: string
   user:       { username?: string } | null
 }) {
   const [activeReplay, setActiveReplay] = useState<ReplayItem | null>(null)
@@ -502,7 +552,7 @@ function ReplayGrid({
       <ReplayPlayerView
         replay={activeReplay}
         accessMode={accessMode}
-        liveId={liveId}
+        tokenInput={tokenInput}
         user={user}
         onBack={() => setActiveReplay(null)}
       />
@@ -515,8 +565,6 @@ function ReplayGrid({
 
   return (
     <div className="min-h-screen bg-[#0a0a0a] text-white flex flex-col">
-
-      {/* Top Bar */}
       <header className="sticky top-0 z-10 border-b border-white/10 bg-[#0a0a0a]/90 backdrop-blur-md">
         <div className="flex items-center justify-between px-4 py-3">
           <div className="flex items-center gap-3">
@@ -531,7 +579,6 @@ function ReplayGrid({
               <p className="text-[10px] text-white/30 mt-0.5">{replays.length} video tersedia</p>
             </div>
           </div>
-
           <div className="flex items-center gap-2">
             {accessMode === "membership" ? (
               <span className="flex items-center gap-1 rounded-full bg-blue-500/20 px-2.5 py-1 text-xs font-medium text-blue-300">
@@ -552,8 +599,6 @@ function ReplayGrid({
             )}
           </div>
         </div>
-
-        {/* Search */}
         <div className="px-4 pb-3">
           <div className="relative">
             <svg className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-white/30"
@@ -572,7 +617,6 @@ function ReplayGrid({
         </div>
       </header>
 
-      {/* Grid */}
       <main className="flex-1 px-4 py-4">
         {filtered.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-24 gap-3">
@@ -594,14 +638,10 @@ function ReplayGrid({
                   onClick={() => setActiveReplay(replay)}
                   className="group relative overflow-hidden rounded-2xl border border-white/10 bg-white/5 text-left transition-all hover:border-white/20 hover:bg-white/8 active:scale-[0.98]"
                 >
-                  {/* Thumbnail */}
                   <div className="relative aspect-video w-full overflow-hidden bg-white/5">
                     {replay.thumbnail_url ? (
-                      <img
-                        src={replay.thumbnail_url}
-                        alt={replay.title}
-                        className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
-                      />
+                      <img src={replay.thumbnail_url} alt={replay.title}
+                        className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105" />
                     ) : (
                       <div className="absolute inset-0 flex items-center justify-center">
                         <svg className="h-8 w-8 text-white/20" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -610,9 +650,7 @@ function ReplayGrid({
                         </svg>
                       </div>
                     )}
-
                     <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent" />
-
                     {hasVideo && (
                       <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
                         <div className="flex h-12 w-12 items-center justify-center rounded-full bg-white/90 shadow-lg">
@@ -622,7 +660,6 @@ function ReplayGrid({
                         </div>
                       </div>
                     )}
-
                     {!hasVideo && (
                       <div className="absolute bottom-2 left-2">
                         <span className="rounded-md bg-black/60 px-2 py-0.5 text-[10px] font-medium text-white/40">
@@ -631,12 +668,8 @@ function ReplayGrid({
                       </div>
                     )}
                   </div>
-
-                  {/* Info */}
                   <div className="p-3 space-y-1">
-                    <p className="text-sm font-semibold text-white leading-snug line-clamp-2">
-                      {replay.title}
-                    </p>
+                    <p className="text-sm font-semibold text-white leading-snug line-clamp-2">{replay.title}</p>
                     <p className="text-[11px] text-white/35">{formatDate(replay.created_at)}</p>
                   </div>
                 </button>
@@ -646,12 +679,11 @@ function ReplayGrid({
         )}
       </main>
 
-      {/* Footer */}
       <footer className="px-4 py-3 border-t border-white/10">
         <p className="text-xs text-white/20">
           {accessMode === "membership"
             ? `Membership · ${user?.username ?? "member"}`
-            : `Tiket · ${liveId}`}
+            : `Tiket · ${tokenInput}`}
         </p>
       </footer>
     </div>
@@ -663,10 +695,11 @@ export default function ReplayPage() {
   const params = useParams<{ liveId: string }>()
   const liveId = params?.liveId ?? ""
 
-  const isMembRoute   = liveId === "memb"
-  const hasTokenInUrl = !!liveId && liveId !== "memb"
+  // liveId dari URL hanya dipakai untuk route /replay/memb
+  const isMembRoute = liveId === "memb"
 
   const [verifyState,    setVerifyState]    = useState<VerifyState>("checking")
+  const [tokenInput,     setTokenInput]     = useState("")        // token yang user ketik
   const [tokenInfo,      setTokenInfo]      = useState<LiveTokenInfo | null>(null)
   const [errorMsg,       setErrorMsg]       = useState("")
   const [accessMode,     setAccessMode]     = useState<"token" | "membership">("token")
@@ -674,6 +707,7 @@ export default function ReplayPage() {
   const [loadingReplays, setLoadingReplays] = useState(false)
 
   const user = typeof window !== "undefined" ? getUserFromStorage() : null
+  const hasMembership = !!(user && isMembershipActive(user.membership_type, user.membership_expired_at))
 
   const fetchReplays = useCallback(async () => {
     setLoadingReplays(true)
@@ -685,21 +719,21 @@ export default function ReplayPage() {
     finally { setLoadingReplays(false) }
   }, [])
 
-  const fetchTokenInfo = useCallback(async (): Promise<LiveTokenInfo | null> => {
+  const fetchTokenInfo = useCallback(async (token: string): Promise<LiveTokenInfo | null> => {
     try {
-      const res  = await fetch(`${API_BASE}/live/${liveId}/info?apikey=${API_KEY}`)
+      const res  = await fetch(`${API_BASE}/live/${token}/info?apikey=${API_KEY}`)
       const data = await res.json()
       return data.status && data.data ? data.data : null
     } catch { return null }
-  }, [liveId])
+  }, [])
 
-  const consumeToken = useCallback(async (info: LiveTokenInfo): Promise<boolean> => {
+  const consumeToken = useCallback(async (token: string, info: LiveTokenInfo): Promise<boolean> => {
     try {
-      const res  = await fetch(`${API_BASE}/live/${liveId}?apikey=${API_KEY}`)
+      const res  = await fetch(`${API_BASE}/live/${token}?apikey=${API_KEY}`)
       const data = await res.json()
       if (data.status) {
         writeCachedAccess({
-          liveId,
+          liveId:     token,
           consumedAt: Date.now(),
           expiresAt:  info.expires_at ? new Date(info.expires_at).getTime() : null,
         })
@@ -711,14 +745,12 @@ export default function ReplayPage() {
       setErrorMsg("Gagal menghubungi server")
       return false
     }
-  }, [liveId])
+  }, [])
 
-  const runVerification = useCallback(async () => {
-    setVerifyState("checking")
-
+  // Jalankan verifikasi membership saat mount (untuk /replay/memb atau user dengan membership)
+  useEffect(() => {
     if (isMembRoute) {
-      const u = getUserFromStorage()
-      if (!u || !isMembershipActive(u.membership_type, u.membership_expired_at)) {
+      if (!hasMembership) {
         setErrorMsg("Halaman ini hanya untuk member aktif.")
         setVerifyState("denied")
         return
@@ -729,28 +761,27 @@ export default function ReplayPage() {
       return
     }
 
-    if (!hasTokenInUrl) {
-      const u = getUserFromStorage()
-      if (u && isMembershipActive(u.membership_type, u.membership_expired_at)) {
-        setAccessMode("membership")
-        setVerifyState("membership")
-        fetchReplays()
-        return
-      }
-      setErrorMsg("Akses memerlukan live token atau membership aktif.")
-      setVerifyState("denied")
-      return
-    }
-
-    const u = getUserFromStorage()
-    if (u && isMembershipActive(u.membership_type, u.membership_expired_at)) {
+    // Untuk route /replay/show atau /replay/[token-lain]:
+    // Cek membership dulu — jika aktif, langsung masuk
+    if (hasMembership) {
       setAccessMode("membership")
       setVerifyState("membership")
       fetchReplays()
       return
     }
 
-    const cached = readCachedAccess(liveId)
+    // Tidak ada membership → tampilkan form input token
+    setVerifyState("input")
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Dipanggil saat user klik "Akses Replay" di form
+  const handleTokenSubmit = useCallback(async (token: string) => {
+    setTokenInput(token)
+    setTokenInfo(null)
+    setErrorMsg("")
+
+    // Cek cache dulu
+    const cached = readCachedAccess(token)
     if (cached) {
       setAccessMode("token")
       setVerifyState("granted")
@@ -758,7 +789,8 @@ export default function ReplayPage() {
       return
     }
 
-    const info = await fetchTokenInfo()
+    setVerifyState("checking")
+    const info = await fetchTokenInfo(token)
     if (!info) {
       setErrorMsg("Token tidak ditemukan.")
       setVerifyState("denied")
@@ -771,7 +803,7 @@ export default function ReplayPage() {
     if (info.is_maxed)    { setErrorMsg(`Batas penggunaan token tercapai (${info.max_uses}x).`); setVerifyState("denied"); return }
 
     setVerifyState("verifying")
-    const ok = await consumeToken(info)
+    const ok = await consumeToken(token, info)
     if (ok) {
       setAccessMode("token")
       setVerifyState("granted")
@@ -779,20 +811,49 @@ export default function ReplayPage() {
     } else {
       setVerifyState("denied")
     }
-  }, [liveId, isMembRoute, hasTokenInUrl, fetchTokenInfo, consumeToken, fetchReplays])
+  }, [fetchTokenInfo, consumeToken, fetchReplays])
 
-  useEffect(() => { runVerification() }, [runVerification])
+  // Dipanggil dari StatusScreen tombol "Ganti Token"
+  const handleBackToInput = useCallback(() => {
+    setVerifyState("input")
+    setTokenInfo(null)
+    setErrorMsg("")
+  }, [])
 
-  const isVerifyScreen = verifyState !== "granted" && verifyState !== "membership"
+  // Dipanggil dari StatusScreen tombol "Coba Lagi"
+  const handleRetry = useCallback(() => {
+    if (tokenInput) handleTokenSubmit(tokenInput)
+    else setVerifyState("input")
+  }, [tokenInput, handleTokenSubmit])
 
-  if (isVerifyScreen) {
+  // Dipanggil dari TokenInputScreen tombol "Lanjutkan dengan Membership"
+  const handleUseMembership = useCallback(() => {
+    setAccessMode("membership")
+    setVerifyState("membership")
+    fetchReplays()
+  }, [fetchReplays])
+
+  // ── Render ────────────────────────────────────────────────
+  if (verifyState === "input") {
     return (
-      <VerifyScreen
+      <TokenInputScreen
+        isMembRoute={isMembRoute}
+        onSubmit={handleTokenSubmit}
+        onUseMembership={handleUseMembership}
+        hasMembership={hasMembership}
+      />
+    )
+  }
+
+  if (verifyState === "checking" || verifyState === "verifying" || verifyState === "denied" || verifyState === "error") {
+    return (
+      <StatusScreen
         state={verifyState}
         tokenInfo={tokenInfo}
-        liveId={liveId}
+        tokenInput={tokenInput}
         errorMsg={errorMsg}
-        onRetry={runVerification}
+        onRetry={handleRetry}
+        onBack={handleBackToInput}
       />
     )
   }
@@ -812,7 +873,7 @@ export default function ReplayPage() {
     <ReplayGrid
       replays={replays}
       accessMode={accessMode}
-      liveId={liveId}
+      tokenInput={tokenInput}
       user={user}
     />
   )

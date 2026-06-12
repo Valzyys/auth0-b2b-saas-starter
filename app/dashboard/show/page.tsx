@@ -34,7 +34,7 @@ interface Show {
   idn_gold_price:      number | null
   description:         string | null
   ticket:              TicketInfo
-  live_token_id?:      string | null // <-- Tambahkan baris ini
+  live_token_id?:      string | null
 }
 
 interface ActivePayment {
@@ -178,7 +178,13 @@ function QrisModal({
   const [cancelling, setCancelling] = useState(false)
   const [qrImage, setQrImage]       = useState<string | null>(payment.qr_image)
   const [qrisContent, setQrisContent] = useState<string | null>(payment.qris_content)
-  const [secsLeft, setSecsLeft]     = useState(3600)
+  const [secsLeft, setSecsLeft]     = useState(() => {
+    if (payment.expired_at) {
+      const diff = Math.floor((new Date(payment.expired_at).getTime() - Date.now()) / 1000)
+      return Math.max(0, diff)
+    }
+    return (payment.timeout_minutes ?? 60) * 60
+  })
   const [copied, setCopied]         = useState(false)
   const pollRef                     = useRef<ReturnType<typeof setInterval> | null>(null)
 
@@ -534,7 +540,7 @@ function ShowCard({
                 </span>
               </div>
               {show.status === "live" && (
-                <a
+                
                   href={`/live/${show.live_token_id}`}
                   className="flex w-full items-center justify-center gap-2 rounded-md bg-red-600 py-2 text-sm font-medium text-white hover:bg-red-700 transition-colors"
                 >
@@ -664,7 +670,7 @@ function OrderRow({
           <p className="text-xs text-green-800 dark:text-green-300 font-medium">
             🎟️ Ticket aktif
           </p>
-          <a
+          
             href={`/live/${order.live_token_id}`}
             className="ml-3 shrink-0 rounded-md bg-green-600 px-3 py-1 text-xs font-medium text-white hover:bg-green-700 transition-colors"
           >
@@ -689,20 +695,16 @@ export default function SchedulePage() {
   const [isLoggedIn, setIsLoggedIn]     = useState(false)
   const [tab, setTab]                   = useState<"shows" | "history">("shows")
 
-  // show_id set → sudah punya ticket valid
   const [purchasedShowIds, setPurchasedShowIds] = useState<Set<string>>(new Set())
 
-  // Order history
   const [history, setHistory]           = useState<TicketOrder[]>([])
   const [loadingHistory, setLoadingHistory] = useState(false)
   const [resuming, setResuming]         = useState<string | null>(null)
 
-  // Detect login
   useEffect(() => {
     setIsLoggedIn(!!getAccessToken())
   }, [])
 
-  // Fetch shows
   const fetchShows = useCallback(() => {
     return fetch(`${API_BASE}/ticket/shows?apikey=${API_KEY}`)
       .then(r => r.json())
@@ -717,7 +719,6 @@ export default function SchedulePage() {
     fetchShows().finally(() => setLoading(false))
   }, [fetchShows])
 
-  // Fetch purchased tickets (my-tickets) untuk badge
   const fetchPurchased = useCallback(async () => {
     if (!getAccessToken()) return
     try {
@@ -738,7 +739,6 @@ export default function SchedulePage() {
     if (isLoggedIn) fetchPurchased()
   }, [isLoggedIn, fetchPurchased])
 
-  // Fetch order history
   const fetchHistory = useCallback(async () => {
     if (!getAccessToken()) return
     setLoadingHistory(true)
@@ -774,7 +774,10 @@ export default function SchedulePage() {
     try {
       const res  = await fetchWithAuth(`${API_BASE}/ticket/buy?apikey=${API_KEY}`, {
         method: "POST",
-        body:   JSON.stringify({ show_id: show.show_id }),
+        body:   JSON.stringify({
+          show_id:         show.show_id,
+          token_ttl_hours: show.ticket.token_ttl_hours ?? 216,
+        }),
       })
       const data = await res.json()
 
@@ -791,7 +794,7 @@ export default function SchedulePage() {
           qris_content:     resume.qris_content,
           qr_image:         resume.qr_image,
           expired_at:       resume.expired_at,
-          timeout_minutes:  60,
+          timeout_minutes:  resume.timeout_minutes ?? show.ticket.token_ttl_hours * 60,
         })
         return
       }
@@ -811,7 +814,7 @@ export default function SchedulePage() {
         qris_content:     data.data.qris_content,
         qr_image:         data.data.qr_image,
         expired_at:       data.data.expired_at,
-        timeout_minutes:  data.data.timeout_minutes,
+        timeout_minutes:  data.data.timeout_minutes ?? show.ticket.token_ttl_hours * 60,
       })
     } catch {
       setBuyError("Terjadi kesalahan jaringan. Coba lagi.")
@@ -820,16 +823,13 @@ export default function SchedulePage() {
     }
   }
 
-  // Resume payment dari order history
   const handleResumeFromHistory = useCallback(async (order: TicketOrder) => {
     setResuming(order.ref_id)
     try {
-      // Re-check status dulu untuk ambil QRIS terbaru
       const res  = await fetch(`${API_BASE}/ticket/check/${order.ref_id}?apikey=${API_KEY}`)
       const data = await res.json()
 
       if (data.order_status === "paid") {
-        // Sudah lunas, refresh history
         await fetchHistory()
         await fetchPurchased()
         return
@@ -846,10 +846,9 @@ export default function SchedulePage() {
           qris_content:     data.data.qris_content,
           qr_image:         data.data.qr_image,
           expired_at:       order.expired_at,
-          timeout_minutes:  60,
+          timeout_minutes:  data.data.timeout_minutes ?? 60,
         })
       } else {
-        // Expired atau cancelled, refresh
         await fetchHistory()
       }
     } catch (_) {
@@ -863,9 +862,7 @@ export default function SchedulePage() {
     setActivePayment(null)
     fetchShows()
     fetchPurchased()
-    // Juga refresh history kalau sudah di-load
     fetchHistory()
-    // Pindah ke tab history agar user bisa lihat ticket baru
     setTab("history")
   }, [fetchShows, fetchPurchased, fetchHistory])
 

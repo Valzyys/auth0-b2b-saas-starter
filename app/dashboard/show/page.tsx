@@ -540,7 +540,7 @@ function ShowCard({
                 </span>
               </div>
               {show.status === "live" && (
-                
+                <a
                   href={`/live/${show.live_token_id}`}
                   className="flex w-full items-center justify-center gap-2 rounded-md bg-red-600 py-2 text-sm font-medium text-white hover:bg-red-700 transition-colors"
                 >

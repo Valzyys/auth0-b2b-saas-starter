@@ -1164,22 +1164,44 @@ export default function LiveTokenPage() {
     } catch { return null }
   }, [liveId])
 
-  const consumeToken = useCallback(async (info: LiveTokenInfo): Promise<boolean> => {
-    try {
-      const res  = await fetch(`${API_BASE}/live/${liveId}?apikey=${API_KEY}`)
-      const data = await res.json()
-      if (data.status) {
+ const consumeToken = useCallback(async (info: LiveTokenInfo): Promise<boolean> => {
+  try {
+    const res  = await fetch(`${API_BASE}/live/${liveId}?apikey=${API_KEY}`)
+    const data = await res.json()
+    if (data.status) {
+      writeCachedAccess({
+        liveId, showId: info.show_id, consumedAt: Date.now(),
+        expiresAt: info.expires_at ? new Date(info.expires_at).getTime() : null,
+      })
+      return true
+    }
+
+    // ── FIX: endpoint "use" kadang return MAX_USES_REACHED meski
+    // uses_count masih < max_uses. Validasi ulang pakai /info sebelum
+    // benar-benar menolak — sumber kebenaran adalah uses_count vs max_uses.
+    if (data.code === "MAX_USES_REACHED") {
+      const freshInfo = await fetchTokenInfo()
+      const checkInfo = freshInfo ?? info
+
+      if (!isTokenMaxed(checkInfo)) {
+        // uses_count < max_uses -> token sebenarnya masih valid, izinkan
         writeCachedAccess({
-          liveId, showId: info.show_id, consumedAt: Date.now(),
-          expiresAt: info.expires_at ? new Date(info.expires_at).getTime() : null,
+          liveId, showId: checkInfo.show_id, consumedAt: Date.now(),
+          expiresAt: checkInfo.expires_at ? new Date(checkInfo.expires_at).getTime() : null,
         })
+        setTokenInfo(checkInfo)
         return true
       }
-      setErrorMsg(data.message || "Token tidak valid"); return false
-    } catch {
-      setErrorMsg("Gagal menghubungi server"); return false
+
+      setErrorMsg(`Token sudah mencapai batas penggunaan (${parseTokenInt(checkInfo.max_uses)}x)`)
+      return false
     }
-  }, [liveId])
+
+    setErrorMsg(data.message || "Token tidak valid"); return false
+  } catch {
+    setErrorMsg("Gagal menghubungi server"); return false
+  }
+}, [liveId, fetchTokenInfo])
 
   const handleEmailAccessGranted = useCallback(async (email: string) => {
     setAccessEmail(email); setAccessMode("email"); setVerifyState("email_access")

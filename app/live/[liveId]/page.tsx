@@ -13,7 +13,6 @@ const LS_PREFIX = "t48_live_access_"
 const EMAIL_ACCESS_KEY    = "t48_email_access"
 const EMAIL_ACCESS_TTL_MS = 7 * 60 * 60 * 1000
 
-// Supabase — ganti dengan env var kamu
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || "https://mzxfuaoihgzxvokwarao.supabase.co"
 const SUPABASE_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im16eGZ1YW9paGd6eHZva3dhcmFvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ0MDg0NjIsImV4cCI6MjA4OTk4NDQ2Mn0.OFYCkBFXCSfLn-wG94OHHKL5CX8T_BLrbDGPiBdPIog"
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY)
@@ -46,8 +45,8 @@ interface LiveTokenInfo {
   live_id:        string
   show_id:        string | null
   label:          string
-  max_uses:       number | null
-  uses_count:     number
+  max_uses:       number | string | null
+  uses_count:     number | string
   uses_remaining: number | null
   expires_at:     string | null
   is_active:      boolean
@@ -241,8 +240,21 @@ function getInitials(name: string): string {
   return name.split(" ").slice(0, 2).map(w => w[0]).join("").toUpperCase() || "U"
 }
 
+// ─── Token max_uses helper — API returns strings, hitung client-side ──────────
+function parseTokenInt(val: number | string | null | undefined): number {
+  if (val == null) return 0
+  const n = parseInt(String(val), 10)
+  return isNaN(n) ? 0 : n
+}
+
+function isTokenMaxed(info: LiveTokenInfo): boolean {
+  const maxUses   = parseTokenInt(info.max_uses)
+  const usesCount = parseTokenInt(info.uses_count)
+  if (maxUses <= 0) return false          // null / 0 = unlimited
+  return usesCount >= maxUses
+}
+
 // ─── useViewerCount ───────────────────────────────────────────
-// Pakai Supabase Presence — otomatis cleanup saat tab ditutup/disconnect
 function useViewerCount(showId: string | null, userId: string | null) {
   const [viewerCount, setViewerCount] = useState(0)
   const presenceRef  = useRef<ReturnType<typeof supabase.channel> | null>(null)
@@ -259,7 +271,6 @@ function useViewerCount(showId: string | null, userId: string | null) {
     channel
       .on("presence", { event: "sync" }, () => {
         const state = channel.presenceState()
-        // Hitung jumlah unique key (setiap key = 1 viewer unik)
         setViewerCount(Object.keys(state).length)
       })
       .on("presence", { event: "join" }, () => {
@@ -554,9 +565,12 @@ function VerifyScreen({
             {tokenInfo && (
               <div className="rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-left space-y-1 text-xs text-white/40">
                 <p className="font-mono break-all">{liveId}</p>
-                {tokenInfo.is_expired  && <p className="text-red-400">⚠ Token sudah expired</p>}
-                {tokenInfo.is_maxed    && <p className="text-red-400">⚠ Batas penggunaan tercapai ({tokenInfo.max_uses}x)</p>}
-                {!tokenInfo.is_active  && <p className="text-red-400">⚠ Token dinonaktifkan admin</p>}
+                {tokenInfo.is_expired && <p className="text-red-400">⚠ Token sudah expired</p>}
+                {/* Hitung ulang is_maxed client-side karena server return string */}
+                {isTokenMaxed(tokenInfo) && (
+                  <p className="text-red-400">⚠ Batas penggunaan tercapai ({parseTokenInt(tokenInfo.max_uses)}x)</p>
+                )}
+                {!tokenInfo.is_active && <p className="text-red-400">⚠ Token dinonaktifkan admin</p>}
               </div>
             )}
             <div className="pt-2 border-t border-white/10 space-y-3">
@@ -610,12 +624,10 @@ function LiveChatPanel({
   const channelRef  = useRef<ReturnType<typeof supabase.channel> | null>(null)
   const inputRef    = useRef<HTMLInputElement>(null)
 
-  // Auto scroll ke bawah saat ada pesan baru
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" })
   }, [messages.length])
 
-  // Subscribe ke realtime Supabase
   useEffect(() => {
     if (!showId) return
 
@@ -659,11 +671,8 @@ function LiveChatPanel({
 
     setSending(true)
     setInput("")
-
-    // Optimistic update
     setMessages(prev => [...prev.slice(-199), msg])
 
-    // Broadcast ke Supabase
     await channelRef.current?.send({
       type:    "broadcast",
       event:   "chat_message",
@@ -704,7 +713,6 @@ function LiveChatPanel({
 
   return (
     <div className="flex flex-col h-full">
-      {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-white/10 shrink-0">
         <div className="flex items-center gap-2">
           <span className="relative flex h-2 w-2">
@@ -716,7 +724,6 @@ function LiveChatPanel({
         <span className="text-xs text-white/30 tabular-nums">{messages.length} pesan</span>
       </div>
 
-      {/* Messages */}
       <div className="flex-1 overflow-y-auto px-3 py-3 space-y-3 min-h-0">
         {messages.length === 0 && (
           <div className="flex flex-col items-center justify-center h-full gap-3 py-10 text-center">
@@ -734,7 +741,6 @@ function LiveChatPanel({
 
         {messages.map(msg => (
           <div key={msg.id} className="flex gap-2.5 items-start group">
-            {/* Avatar */}
             <div className="shrink-0 h-7 w-7 rounded-full overflow-hidden bg-white/10 flex items-center justify-center ring-1 ring-white/10">
               {msg.avatar_url ? (
                 <img
@@ -749,7 +755,6 @@ function LiveChatPanel({
               )}
             </div>
 
-            {/* Content */}
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-1.5 flex-wrap mb-0.5">
                 {getRoleBadge(msg.role)}
@@ -767,7 +772,6 @@ function LiveChatPanel({
         <div ref={chatEndRef} />
       </div>
 
-      {/* Input area */}
       <div className="px-3 py-3 border-t border-white/10 shrink-0">
         {chatUserLoading ? (
           <div className="flex items-center justify-center gap-2 py-2">
@@ -776,7 +780,6 @@ function LiveChatPanel({
           </div>
         ) : chatUser ? (
           <div className="space-y-2">
-            {/* User chip */}
             <div className="flex items-center gap-2">
               <div className="h-5 w-5 rounded-full overflow-hidden bg-white/10 shrink-0">
                 {chatUser.avatar ? (
@@ -792,7 +795,6 @@ function LiveChatPanel({
               </span>
             </div>
 
-            {/* Input row */}
             <div className="flex gap-2">
               <input
                 ref={inputRef}
@@ -863,7 +865,6 @@ function PlayerView({
   const isScheduled  = show.status === "scheduled"
   const showCountdown = isScheduled && countdown.diff > 0
 
-  // ── Chat user: derived dari user prop ──────────────────
   const [chatUser,        setChatUser]        = useState<ChatUser | null>(null)
   const [chatUserLoading, setChatUserLoading] = useState(true)
 
@@ -874,7 +875,6 @@ function PlayerView({
         const stored = getUserFromStorage()
         if (!stored?.user_id) { setChatUserLoading(false); return }
 
-        // Coba fetch profile terbaru dari API
         let profile: ChatUser = {
           user_id:   stored.user_id,
           username:  stored.username  || "",
@@ -884,9 +884,7 @@ function PlayerView({
         }
 
         try {
-          const res = await fetch(
-            `${API_BASE}/profile/${stored.user_id}?apikey=${API_KEY}`
-          )
+          const res = await fetch(`${API_BASE}/profile/${stored.user_id}?apikey=${API_KEY}`)
           const data = await res.json()
           if (data.status && data.data) {
             profile = {
@@ -897,9 +895,7 @@ function PlayerView({
               role:      data.data.role      || stored.role      || "user",
             }
           }
-        } catch {
-          // Fallback ke data stored — sudah di-set di atas
-        }
+        } catch {}
 
         setChatUser(profile)
       } finally {
@@ -924,7 +920,6 @@ function PlayerView({
   return (
     <div className="min-h-screen bg-[#0a0a0a] text-white flex flex-col">
 
-      {/* Top Bar */}
       <header className="flex items-center justify-between px-4 py-3 border-b border-white/10 shrink-0">
         <div className="flex items-center gap-3 min-w-0">
           {show.creator.image_url && (
@@ -968,13 +963,10 @@ function PlayerView({
         </div>
       </header>
 
-      {/* Main layout: player + chat */}
       <div className="flex flex-1 flex-col lg:flex-row min-h-0">
 
-        {/* Left: Player + Info */}
         <div className="flex flex-col flex-1 min-w-0">
 
-          {/* Player */}
           <div className="relative w-full bg-black shrink-0" style={{ aspectRatio: "16/9" }}>
             {show.image_url && (
               <img src={show.image_url} alt={show.title}
@@ -1032,7 +1024,6 @@ function PlayerView({
             )}
           </div>
 
-          {/* Show Info */}
           <div className="px-4 py-4 space-y-3 border-b border-white/10">
             <div className="flex items-start justify-between gap-3">
               <div className="space-y-1.5 min-w-0">
@@ -1080,7 +1071,6 @@ function PlayerView({
             )}
           </div>
 
-          {/* Footer */}
           <div className="px-4 py-3 flex items-center justify-between">
             <p className="text-xs text-white/20">
               {accessMode === "membership"
@@ -1095,7 +1085,6 @@ function PlayerView({
           </div>
         </div>
 
-        {/* Right: Chat Panel */}
         <div className="w-full lg:w-80 xl:w-96 border-t lg:border-t-0 lg:border-l border-white/10 flex flex-col shrink-0 lg:h-[calc(100vh-57px)] lg:sticky lg:top-[57px]">
           <LiveChatPanel
             showId={show.showId}
@@ -1256,9 +1245,15 @@ export default function LiveTokenPage() {
     const info = await fetchTokenInfo()
     if (!info) { setErrorMsg("Token tidak ditemukan"); setVerifyState("denied"); return }
     setTokenInfo(info)
+
     if (!info.is_active) { setErrorMsg("Token dinonaktifkan admin"); setVerifyState("denied"); return }
-    if (info.is_expired)  { setErrorMsg("Token sudah expired");        setVerifyState("denied"); return }
-    if (info.is_maxed)    { setErrorMsg(`Token sudah mencapai batas penggunaan (${info.max_uses}x)`); setVerifyState("denied"); return }
+    if (info.is_expired)  { setErrorMsg("Token sudah expired");       setVerifyState("denied"); return }
+
+    // ── FIX: hitung is_maxed client-side — API return max_uses/uses_count sebagai string ──
+    if (isTokenMaxed(info)) {
+      setErrorMsg(`Token sudah mencapai batas penggunaan (${parseTokenInt(info.max_uses)}x)`)
+      setVerifyState("denied"); return
+    }
 
     const s = await findShow(info.show_id); if (s) setShow(s)
     const status = s?.status ?? "scheduled"

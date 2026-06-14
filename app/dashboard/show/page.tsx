@@ -6,6 +6,7 @@ import { useEffect, useState, useRef, useCallback } from "react"
 const API_BASE = "https://v5.jkt48connect.com/api/team48"
 const API_KEY  = "JKTCONNECT"
 const POLL_MS  = 4000
+const TOKEN_TTL_HOURS = 360 // 15 hari
 
 // ─── Types ─────────────────────────────────────────────────
 
@@ -183,7 +184,7 @@ function QrisModal({
       const diff = Math.floor((new Date(payment.expired_at).getTime() - Date.now()) / 1000)
       return Math.max(0, diff)
     }
-    return (payment.timeout_minutes ?? 60) * 60
+    return (payment.timeout_minutes ?? TOKEN_TTL_HOURS * 60) * 60
   })
   const [copied, setCopied]         = useState(false)
   const pollRef                     = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -776,7 +777,7 @@ export default function SchedulePage() {
         method: "POST",
         body:   JSON.stringify({
           show_id:         show.show_id,
-          token_ttl_hours: show.ticket.token_ttl_hours ?? 216,
+          token_ttl_hours: TOKEN_TTL_HOURS, // 15 hari = 360 jam
         }),
       })
       const data = await res.json()
@@ -794,7 +795,7 @@ export default function SchedulePage() {
           qris_content:     resume.qris_content,
           qr_image:         resume.qr_image,
           expired_at:       resume.expired_at,
-          timeout_minutes:  resume.timeout_minutes ?? show.ticket.token_ttl_hours * 60,
+          timeout_minutes:  resume.timeout_minutes ?? TOKEN_TTL_HOURS * 60,
         })
         return
       }
@@ -814,7 +815,7 @@ export default function SchedulePage() {
         qris_content:     data.data.qris_content,
         qr_image:         data.data.qr_image,
         expired_at:       data.data.expired_at,
-        timeout_minutes:  data.data.timeout_minutes ?? show.ticket.token_ttl_hours * 60,
+        timeout_minutes:  data.data.timeout_minutes ?? TOKEN_TTL_HOURS * 60,
       })
     } catch {
       setBuyError("Terjadi kesalahan jaringan. Coba lagi.")
@@ -846,7 +847,7 @@ export default function SchedulePage() {
           qris_content:     data.data.qris_content,
           qr_image:         data.data.qr_image,
           expired_at:       order.expired_at,
-          timeout_minutes:  data.data.timeout_minutes ?? 60,
+          timeout_minutes:  data.data.timeout_minutes ?? TOKEN_TTL_HOURS * 60,
         })
       } else {
         await fetchHistory()

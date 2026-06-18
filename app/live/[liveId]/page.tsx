@@ -17,6 +17,13 @@ const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || "https://mzxfuaoihg
 const SUPABASE_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im16eGZ1YW9paGd6eHZva3dhcmFvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ0MDg0NjIsImV4cCI6MjA4OTk4NDQ2Mn0.OFYCkBFXCSfLn-wG94OHHKL5CX8T_BLrbDGPiBdPIog"
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY)
 
+// ─── GiStream / CTV constants ─────────────────────────────────
+const PARTNER_KID    = "jkt48connect-v1"
+const PARTNER_SECRET = "gstream@jkt48connect@2108"
+const TOKEN_API_BASE = "https://v5.jkt48connect.com"
+const CTV_BASE       = "https://ctv.jkt48connect.com"
+const SIGNING_PATH   = "/api/token/generate?apikey=JKTCONNECT"
+
 // ─── Slug thumbnail overrides ─────────────────────────────────
 const SLUG_THUMBNAIL_OVERRIDES: { pattern: string; image: string }[] = [
   {
@@ -99,6 +106,26 @@ interface CachedEmailAccess {
   expiresAt: number
 }
 
+// ─── Server / source types ────────────────────────────────────
+type ServerType = "idn" | "rtmp" | "youtube"
+
+interface IdnStreamData {
+  url:       string
+  token:     string
+  qualities: IdnQuality[]
+}
+
+interface IdnQuality {
+  index:           number
+  name:            string
+  quality:         string
+  bandwidth:       number
+  bandwidth_label: string
+  resolution:      string
+  fps:             string
+  manual_url:      string
+}
+
 // ─── Chat types ──────────────────────────────────────────────
 interface ChatMessage {
   id:          string
@@ -132,7 +159,81 @@ type VerifyState =
   | "email_denied"
   | "error"
 
-// ─── Helpers ─────────────────────────────────────────────────
+// ─── GiStream HMAC helpers ────────────────────────────────────
+async function sha256Hex(str: string): Promise<string> {
+  const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(str))
+  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, "0")).join("")
+}
+
+async function hmacSHA256Hex(secret: string, message: string): Promise<string> {
+  const key = await crypto.subtle.importKey(
+    "raw", new TextEncoder().encode(secret),
+    { name: "HMAC", hash: "SHA-256" }, false, ["sign"]
+  )
+  const buf = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(message))
+  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, "0")).join("")
+}
+
+async function buildHMACHeaders(): Promise<Record<string, string>> {
+  const timestamp  = Date.now().toString()
+  const nonce      = crypto.randomUUID().replace(/-/g, "")
+  const bodyHash   = await sha256Hex("{}")
+  const signingStr = `${timestamp}:${nonce}:POST:${SIGNING_PATH}:${bodyHash}`
+  const signature  = await hmacSHA256Hex(PARTNER_SECRET, signingStr)
+  return {
+    "x-kid":       PARTNER_KID,
+    "x-timestamp": timestamp,
+    "x-nonce":     nonce,
+    "x-signature": signature,
+  }
+}
+
+async function generateGiStreamToken(slugOrId: string, isSlug: boolean): Promise<string> {
+  const hmacHeaders = await buildHMACHeaders()
+  const res = await fetch(`${TOKEN_API_BASE}${SIGNING_PATH}`, {
+    method: "POST",
+    headers: {
+      ...hmacHeaders,
+      ...(isSlug ? { "x-slug": slugOrId } : { "x-showid": slugOrId }),
+      "Content-Type": "application/json",
+    },
+    body: "{}",
+  })
+  const data = await res.json()
+  if (!data.status) throw new Error("Generate token gagal: " + data.message)
+  return data.data.token
+}
+
+async function getIdnStreamData(slug: string): Promise<IdnStreamData> {
+  const token = await generateGiStreamToken(slug, true)
+  const res = await fetch(`${CTV_BASE}/stream?slug=${slug}`, {
+    headers: { "x-api-token": token, "x-slug": slug },
+  })
+  const data = await res.json()
+  if (!data.success) throw new Error(data.message || "Gagal mendapatkan stream URL")
+
+  const streams: any[] = data.streams || []
+  const autoUrl = streams[0]?.url || ""
+
+  const qualities: IdnQuality[] = streams.map((s: any, idx: number) => ({
+    index:           idx,
+    name:            s.NAME || `${s.RESOLUTION?.split("x")[1] || "?"}p`,
+    quality:         s.NAME || `q${idx}`,
+    bandwidth:       parseInt(s.BANDWIDTH) || 0,
+    bandwidth_label: s.BANDWIDTH
+      ? parseInt(s.BANDWIDTH) >= 1_000_000
+        ? (parseInt(s.BANDWIDTH) / 1_000_000).toFixed(1) + " Mbps"
+        : Math.round(parseInt(s.BANDWIDTH) / 1_000) + " Kbps"
+      : "",
+    resolution:  s.RESOLUTION || "",
+    fps:         s["FRAME-RATE"] || "",
+    manual_url:  s.url || "",
+  }))
+
+  return { url: autoUrl, token, qualities }
+}
+
+// ─── General helpers ──────────────────────────────────────────
 function getCookie(name: string): string | null {
   if (typeof document === "undefined") return null
   const m = document.cookie.match(new RegExp(`(?:^|;\\s*)${name}=([^;]*)`))
@@ -240,7 +341,6 @@ function getInitials(name: string): string {
   return name.split(" ").slice(0, 2).map(w => w[0]).join("").toUpperCase() || "U"
 }
 
-// ─── Token max_uses helper — API returns strings, hitung client-side ──────────
 function parseTokenInt(val: number | string | null | undefined): number {
   if (val == null) return 0
   const n = parseInt(String(val), 10)
@@ -250,7 +350,7 @@ function parseTokenInt(val: number | string | null | undefined): number {
 function isTokenMaxed(info: LiveTokenInfo): boolean {
   const maxUses   = parseTokenInt(info.max_uses)
   const usesCount = parseTokenInt(info.uses_count)
-  if (maxUses <= 0) return false          // null / 0 = unlimited
+  if (maxUses <= 0) return false
   return usesCount >= maxUses
 }
 
@@ -261,43 +361,22 @@ function useViewerCount(showId: string | null, userId: string | null) {
 
   useEffect(() => {
     if (!showId) return
-
     const viewerId  = userId || generateViewerId()
     const channelId = `t48-presence-${showId}`
     const channel   = supabase.channel(channelId, {
       config: { presence: { key: viewerId } },
     })
-
     channel
-      .on("presence", { event: "sync" }, () => {
-        const state = channel.presenceState()
-        setViewerCount(Object.keys(state).length)
-      })
-      .on("presence", { event: "join" }, () => {
-        const state = channel.presenceState()
-        setViewerCount(Object.keys(state).length)
-      })
-      .on("presence", { event: "leave" }, () => {
-        const state = channel.presenceState()
-        setViewerCount(Object.keys(state).length)
-      })
+      .on("presence", { event: "sync" }, () => setViewerCount(Object.keys(channel.presenceState()).length))
+      .on("presence", { event: "join" }, () => setViewerCount(Object.keys(channel.presenceState()).length))
+      .on("presence", { event: "leave" }, () => setViewerCount(Object.keys(channel.presenceState()).length))
       .subscribe(async (status) => {
         if (status === "SUBSCRIBED") {
-          await channel.track({
-            viewer_id:  viewerId,
-            user_id:    userId ?? null,
-            joined_at:  new Date().toISOString(),
-          })
+          await channel.track({ viewer_id: viewerId, user_id: userId ?? null, joined_at: new Date().toISOString() })
         }
       })
-
     presenceRef.current = channel
-
-    return () => {
-      channel.untrack()
-      supabase.removeChannel(channel)
-      presenceRef.current = null
-    }
+    return () => { channel.untrack(); supabase.removeChannel(channel); presenceRef.current = null }
   }, [showId, userId])
 
   return viewerCount
@@ -317,22 +396,177 @@ function useCountdown(targetTs: number | null) {
 }
 
 // ─── HLS Player ───────────────────────────────────────────────
-function HlsPlayer({ src, className }: { src: string; className?: string }) {
+function HlsPlayer({
+  src, className, token,
+}: {
+  src: string
+  className?: string
+  token?: string
+}) {
   const videoRef = useRef<HTMLVideoElement>(null)
+
   useEffect(() => {
     if (!src || !videoRef.current) return
     const video = videoRef.current
-    if (video.canPlayType("application/vnd.apple.mpegurl")) { video.src = src; return }
+
+    if (video.canPlayType("application/vnd.apple.mpegurl")) {
+      video.src = src
+      return
+    }
+
     let hls: import("hls.js").default | null = null
     import("hls.js").then(({ default: Hls }) => {
       if (!Hls.isSupported() || !videoRef.current) return
-      hls = new Hls({ maxBufferLength: 30, maxMaxBufferLength: 60 })
+      hls = new Hls({
+        maxBufferLength:    30,
+        maxMaxBufferLength: 60,
+        ...(token && {
+          xhrSetup: (xhr: XMLHttpRequest) => {
+            xhr.setRequestHeader("x-api-token", token)
+          },
+        }),
+      })
       hls.loadSource(src)
       hls.attachMedia(videoRef.current)
     })
+
     return () => { hls?.destroy() }
-  }, [src])
+  }, [src, token])
+
   return <video ref={videoRef} className={className} controls autoPlay playsInline muted />
+}
+
+// ─── IDN Quality Selector ─────────────────────────────────────
+function IdnQualitySelector({
+  qualities,
+  currentQuality,
+  onSelect,
+}: {
+  qualities: IdnQuality[]
+  currentQuality: IdnQuality | null
+  onSelect: (q: IdnQuality | null) => void
+}) {
+  const [open, setOpen] = useState(false)
+
+  if (!qualities.length) return null
+
+  return (
+    <div className="relative">
+      <button
+        onClick={() => setOpen(p => !p)}
+        className="flex items-center gap-1.5 rounded-full bg-black/60 backdrop-blur-sm border border-white/10 px-3 py-1.5 text-[11px] font-bold text-white hover:bg-black/80 transition-colors"
+      >
+        <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <circle cx="12" cy="12" r="3" />
+          <path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 4.93a10 10 0 0 0 0 14.14" strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} />
+        </svg>
+        {currentQuality ? currentQuality.name : "Auto"}
+      </button>
+
+      {open && (
+        <div className="absolute bottom-[calc(100%+6px)] right-0 z-30 min-w-[180px] rounded-2xl border border-white/10 bg-gray-900/95 backdrop-blur-xl p-2 shadow-2xl">
+          <p className="px-2 pb-1.5 text-[9px] font-bold uppercase tracking-widest text-white/30">Kualitas</p>
+          <button
+            onClick={() => { onSelect(null); setOpen(false) }}
+            className={`mb-0.5 w-full rounded-xl px-3 py-2 text-left text-xs transition-colors ${
+              !currentQuality ? "bg-white/10 text-white font-bold" : "text-white/60 hover:bg-white/5"
+            }`}
+          >
+            ⚡ Auto
+          </button>
+          {qualities.map(q => (
+            <button
+              key={q.quality}
+              onClick={() => { onSelect(q); setOpen(false) }}
+              className={`mb-0.5 flex w-full items-center justify-between rounded-xl px-3 py-2 text-left text-xs transition-colors ${
+                currentQuality?.quality === q.quality ? "bg-white/10 text-white font-bold" : "text-white/60 hover:bg-white/5"
+              }`}
+            >
+              <span>{q.name}</span>
+              <span className="text-[10px] opacity-50">{q.bandwidth_label}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─── Server Selector ──────────────────────────────────────────
+function ServerSelector({
+  activeServer,
+  onChange,
+  hasRtmp,
+  hasYoutube,
+  loading,
+}: {
+  activeServer: ServerType
+  onChange:     (s: ServerType) => void
+  hasRtmp:      boolean
+  hasYoutube:   boolean
+  loading:      boolean
+}) {
+  const servers: { id: ServerType; label: string; icon: React.ReactNode; available: boolean }[] = [
+    {
+      id:   "idn",
+      label: "IDN",
+      available: true,
+      icon: (
+        <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+          <circle cx="12" cy="12" r="10" />
+          <path d="M12 8v4l3 3" />
+        </svg>
+      ),
+    },
+    {
+      id:   "rtmp",
+      label: "RTMP",
+      available: hasRtmp,
+      icon: (
+        <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+          <path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07A19.5 19.5 0 013.4 9.5a19.79 19.79 0 01-3.07-8.67A2 2 0 012.31 1h3a2 2 0 012 1.72c.127.96.361 1.903.7 2.81a2 2 0 01-.45 2.11L6.91 8.4a16 16 0 006.29 6.29l1.77-1.77a2 2 0 012.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0122 16.92z" />
+        </svg>
+      ),
+    },
+    {
+      id:   "youtube",
+      label: "YouTube",
+      available: hasYoutube,
+      icon: (
+        <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M23.498 6.186a3.016 3.016 0 00-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 00.502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 002.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 002.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z" />
+        </svg>
+      ),
+    },
+  ]
+
+  return (
+    <div className="flex items-center gap-1.5">
+      <span className="text-[10px] font-semibold uppercase tracking-wider text-white/30 mr-0.5">Server</span>
+      {servers.map(s => (
+        <button
+          key={s.id}
+          onClick={() => s.available && onChange(s.id)}
+          disabled={!s.available || loading}
+          title={!s.available ? `${s.label} tidak tersedia` : s.label}
+          className={`flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold transition-all ${
+            activeServer === s.id
+              ? "bg-white text-black shadow-sm"
+              : s.available
+              ? "bg-white/10 text-white/60 hover:bg-white/15 hover:text-white"
+              : "cursor-not-allowed bg-white/5 text-white/20"
+          }`}
+        >
+          {loading && activeServer === s.id ? (
+            <div className="h-3 w-3 animate-spin rounded-full border border-current/30 border-t-current" />
+          ) : (
+            s.icon
+          )}
+          {s.label}
+        </button>
+      ))}
+    </div>
+  )
 }
 
 // ─── Email Access Form ────────────────────────────────────────
@@ -566,7 +800,6 @@ function VerifyScreen({
               <div className="rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-left space-y-1 text-xs text-white/40">
                 <p className="font-mono break-all">{liveId}</p>
                 {tokenInfo.is_expired && <p className="text-red-400">⚠ Token sudah expired</p>}
-                {/* Hitung ulang is_maxed client-side karena server return string */}
                 {isTokenMaxed(tokenInfo) && (
                   <p className="text-red-400">⚠ Batas penggunaan tercapai ({parseTokenInt(tokenInfo.max_uses)}x)</p>
                 )}
@@ -630,84 +863,44 @@ function LiveChatPanel({
 
   useEffect(() => {
     if (!showId) return
-
     const channelName = `t48-live-chat-${showId}`
-    const channel = supabase.channel(channelName, {
-      config: { broadcast: { ack: true } },
-    })
-
+    const channel = supabase.channel(channelName, { config: { broadcast: { ack: true } } })
     channel
       .on("broadcast", { event: "chat_message" }, ({ payload }: { payload: ChatMessage }) => {
         setMessages(prev => {
-          const exists = prev.some(m => m.id === payload.id)
-          if (exists) return prev
+          if (prev.some(m => m.id === payload.id)) return prev
           return [...prev.slice(-199), payload]
         })
       })
       .subscribe()
-
     channelRef.current = channel
-
-    return () => {
-      supabase.removeChannel(channel)
-      channelRef.current = null
-    }
+    return () => { supabase.removeChannel(channel); channelRef.current = null }
   }, [showId])
 
   const handleSend = async () => {
     const text = input.trim()
     if (!text || !chatUser || sending) return
-
     const msg: ChatMessage = {
-      id:         generateMsgId(),
-      user_id:    chatUser.user_id,
-      username:   chatUser.username,
-      avatar_url: chatUser.avatar || "",
-      full_name:  chatUser.full_name,
-      role:       chatUser.role,
-      text,
-      timestamp:  new Date().toISOString(),
+      id: generateMsgId(), user_id: chatUser.user_id, username: chatUser.username,
+      avatar_url: chatUser.avatar || "", full_name: chatUser.full_name,
+      role: chatUser.role, text, timestamp: new Date().toISOString(),
     }
-
     setSending(true)
     setInput("")
     setMessages(prev => [...prev.slice(-199), msg])
-
-    await channelRef.current?.send({
-      type:    "broadcast",
-      event:   "chat_message",
-      payload: msg,
-    })
-
+    await channelRef.current?.send({ type: "broadcast", event: "chat_message", payload: msg })
     setSending(false)
     inputRef.current?.focus()
   }
 
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault()
-      handleSend()
-    }
-  }
-
   const formatTime = (iso: string) => {
-    try {
-      const d = new Date(iso)
-      return d.toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" })
-    } catch { return "" }
+    try { return new Date(iso).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" }) }
+    catch { return "" }
   }
 
   const getRoleBadge = (role: string) => {
-    if (role === "admin") return (
-      <span className="rounded px-1 py-0.5 text-[9px] font-black uppercase tracking-wider bg-red-500/20 text-red-400">
-        Admin
-      </span>
-    )
-    if (role === "reseller") return (
-      <span className="rounded px-1 py-0.5 text-[9px] font-black uppercase tracking-wider bg-blue-500/20 text-blue-400">
-        Reseller
-      </span>
-    )
+    if (role === "admin") return <span className="rounded px-1 py-0.5 text-[9px] font-black uppercase tracking-wider bg-red-500/20 text-red-400">Admin</span>
+    if (role === "reseller") return <span className="rounded px-1 py-0.5 text-[9px] font-black uppercase tracking-wider bg-blue-500/20 text-blue-400">Reseller</span>
     return null
   }
 
@@ -738,32 +931,21 @@ function LiveChatPanel({
             </div>
           </div>
         )}
-
         {messages.map(msg => (
           <div key={msg.id} className="flex gap-2.5 items-start group">
             <div className="shrink-0 h-7 w-7 rounded-full overflow-hidden bg-white/10 flex items-center justify-center ring-1 ring-white/10">
               {msg.avatar_url ? (
-                <img
-                  src={msg.avatar_url} alt={msg.full_name || msg.username}
-                  className="h-full w-full object-cover"
-                  onError={e => { (e.target as HTMLImageElement).style.display = "none" }}
-                />
+                <img src={msg.avatar_url} alt={msg.full_name || msg.username} className="h-full w-full object-cover"
+                  onError={e => { (e.target as HTMLImageElement).style.display = "none" }} />
               ) : (
-                <span className="text-[10px] font-bold text-white/60">
-                  {getInitials(msg.full_name || msg.username)}
-                </span>
+                <span className="text-[10px] font-bold text-white/60">{getInitials(msg.full_name || msg.username)}</span>
               )}
             </div>
-
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-1.5 flex-wrap mb-0.5">
                 {getRoleBadge(msg.role)}
-                <span className="text-xs font-semibold text-white/80 leading-none truncate max-w-[120px]">
-                  {msg.full_name || msg.username}
-                </span>
-                <span className="text-[10px] text-white/20 ml-auto opacity-0 group-hover:opacity-100 transition-opacity">
-                  {formatTime(msg.timestamp)}
-                </span>
+                <span className="text-xs font-semibold text-white/80 leading-none truncate max-w-[120px]">{msg.full_name || msg.username}</span>
+                <span className="text-[10px] text-white/20 ml-auto opacity-0 group-hover:opacity-100 transition-opacity">{formatTime(msg.timestamp)}</span>
               </div>
               <p className="text-xs leading-relaxed text-white/50 break-words">{msg.text}</p>
             </div>
@@ -790,29 +972,20 @@ function LiveChatPanel({
                   </div>
                 )}
               </div>
-              <span className="text-[11px] text-white/40 truncate">
-                {chatUser.full_name || chatUser.username}
-              </span>
+              <span className="text-[11px] text-white/40 truncate">{chatUser.full_name || chatUser.username}</span>
             </div>
-
             <div className="flex gap-2">
               <input
-                ref={inputRef}
-                type="text" value={input}
+                ref={inputRef} type="text" value={input}
                 onChange={e => setInput(e.target.value)}
-                onKeyDown={handleKeyDown}
-                placeholder="Tulis komentar..."
-                maxLength={300}
-                disabled={sending}
-                className="flex-1 rounded-xl border border-white/10 bg-white/5 px-3 py-2.5 text-xs text-white placeholder-white/20 outline-none focus:border-white/20 focus:bg-white/8 transition-colors disabled:opacity-50"
+                onKeyDown={e => { if (e.key === "Enter") handleSend() }}
+                placeholder="Tulis komentar..." maxLength={300} disabled={sending}
+                className="flex-1 rounded-xl border border-white/10 bg-white/5 px-3 py-2.5 text-xs text-white placeholder-white/20 outline-none focus:border-white/20 transition-colors disabled:opacity-50"
               />
               <button
-                onClick={handleSend}
-                disabled={!input.trim() || sending}
+                onClick={handleSend} disabled={!input.trim() || sending}
                 className={`h-9 w-9 rounded-xl shrink-0 flex items-center justify-center transition-all ${
-                  input.trim() && !sending
-                    ? "bg-white text-black hover:bg-white/90 active:scale-95"
-                    : "bg-white/10 text-white/20 cursor-not-allowed"
+                  input.trim() && !sending ? "bg-white text-black hover:bg-white/90 active:scale-95" : "bg-white/10 text-white/20 cursor-not-allowed"
                 }`}
               >
                 {sending ? (
@@ -858,31 +1031,89 @@ function PlayerView({
   accessEmail?:    string
   onSignOutEmail?: () => void
 }) {
-  const countdown = useCountdown(show.status === "scheduled" ? (show.scheduled_at ?? null) : null)
-
-  const isLive       = show.status === "live"
-  const isEnded      = show.status === "ended"
-  const isScheduled  = show.status === "scheduled"
+  const countdown   = useCountdown(show.status === "scheduled" ? (show.scheduled_at ?? null) : null)
+  const isLive      = show.status === "live"
+  const isEnded     = show.status === "ended"
+  const isScheduled = show.status === "scheduled"
   const showCountdown = isScheduled && countdown.diff > 0
 
+  // ── Server selector state ────────────────────────────────────
+  const [activeServer,     setActiveServerState] = useState<ServerType>("idn")
+  const [idnStreamData,    setIdnStreamData]    = useState<IdnStreamData | null>(null)
+  const [idnCurrentQuality, setIdnCurrentQuality] = useState<IdnQuality | null>(null)
+  const [idnLoading,       setIdnLoading]       = useState(false)
+  const [idnError,         setIdnError]         = useState("")
+  const idnLoadedRef = useRef(false)
+
+  // ── Chat user ────────────────────────────────────────────────
   const [chatUser,        setChatUser]        = useState<ChatUser | null>(null)
   const [chatUserLoading, setChatUserLoading] = useState(true)
 
+  // ── Load IDN stream via GiStream ──────────────────────────────
+  const loadIdnStream = useCallback(async () => {
+    if (!show.slug) { setIdnError("Slug show tidak tersedia"); return }
+    setIdnLoading(true)
+    setIdnError("")
+    try {
+      const data = await getIdnStreamData(show.slug)
+      setIdnStreamData(data)
+      setIdnCurrentQuality(null) // default: auto (streams[0])
+    } catch (e: any) {
+      setIdnError(e?.message || "Gagal memuat stream IDN")
+    } finally {
+      setIdnLoading(false)
+    }
+  }, [show.slug])
+
+  // ── Switch server ─────────────────────────────────────────────
+  const handleServerChange = useCallback(async (server: ServerType) => {
+    setActiveServerState(server)
+    if (server === "idn" && !idnLoadedRef.current) {
+      idnLoadedRef.current = true
+      await loadIdnStream()
+    }
+  }, [loadIdnStream])
+
+  // ── Auto-load IDN on mount when live ─────────────────────────
+  useEffect(() => {
+    if (isLive && !idnLoadedRef.current) {
+      idnLoadedRef.current = true
+      loadIdnStream()
+    }
+  }, [isLive, loadIdnStream])
+
+  // ── IDN quality change ────────────────────────────────────────
+  const handleIdnQualityChange = useCallback((q: IdnQuality | null) => {
+    setIdnCurrentQuality(q)
+  }, [])
+
+  // ── Active IDN URL (quality-aware) ────────────────────────────
+  const idnStreamUrl = (() => {
+    if (!idnStreamData) return null
+    if (idnCurrentQuality) return idnCurrentQuality.manual_url
+    return idnStreamData.url
+  })()
+
+  // ── RTMP / YouTube from streamData ────────────────────────────
+  const rtmpUrl    = streamData?.rtmp?.url ?? null
+  const youtubeUrl = streamData?.youtube?.embed_url ?? null
+  const fallbackUrl = show.playback_url ?? null
+
+  const hasRtmp    = !!rtmpUrl
+  const hasYoutube = !!youtubeUrl
+
+  // ── Chat init ─────────────────────────────────────────────────
   useEffect(() => {
     const init = async () => {
       setChatUserLoading(true)
       try {
         const stored = getUserFromStorage()
         if (!stored?.user_id) { setChatUserLoading(false); return }
-
         let profile: ChatUser = {
-          user_id:   stored.user_id,
-          username:  stored.username  || "",
+          user_id: stored.user_id, username: stored.username || "",
           full_name: stored.full_name || stored.username || "",
-          avatar:    stored.avatar    || null,
-          role:      stored.role      || "user",
+          avatar: stored.avatar || null, role: stored.role || "user",
         }
-
         try {
           const res = await fetch(`${API_BASE}/profile/${stored.user_id}?apikey=${API_KEY}`)
           const data = await res.json()
@@ -896,30 +1127,16 @@ function PlayerView({
             }
           }
         } catch {}
-
         setChatUser(profile)
-      } finally {
-        setChatUserLoading(false)
-      }
+      } finally { setChatUserLoading(false) }
     }
     init()
   }, [user?.user_id]) // eslint-disable-line
 
-  const activeStreamUrl = (() => {
-    if (!streamData) return null
-    if (activeSource === "rtmp" && streamData.rtmp?.url) return streamData.rtmp.url
-    return null
-  })()
-  const activeYoutubeUrl = (() => {
-    if (!streamData) return null
-    if (activeSource === "youtube" && streamData.youtube?.embed_url) return streamData.youtube.embed_url
-    return null
-  })()
-  const fallbackUrl = show.playback_url ?? null
-
   return (
     <div className="min-h-screen bg-[#0a0a0a] text-white flex flex-col">
 
+      {/* ── Header ── */}
       <header className="flex items-center justify-between px-4 py-3 border-b border-white/10 shrink-0">
         <div className="flex items-center gap-3 min-w-0">
           {show.creator.image_url && (
@@ -964,27 +1181,72 @@ function PlayerView({
       </header>
 
       <div className="flex flex-1 flex-col lg:flex-row min-h-0">
-
         <div className="flex flex-col flex-1 min-w-0">
 
+          {/* ── Video player ── */}
           <div className="relative w-full bg-black shrink-0" style={{ aspectRatio: "16/9" }}>
+            {/* Thumbnail / placeholder */}
             {show.image_url && (
               <img src={show.image_url} alt={show.title}
                 className={`absolute inset-0 h-full w-full object-cover transition-opacity ${
-                  isLive && (activeStreamUrl || activeYoutubeUrl || fallbackUrl) ? "opacity-0" : "opacity-60"
+                  isLive && (idnStreamUrl || rtmpUrl || youtubeUrl || fallbackUrl) ? "opacity-0" : "opacity-60"
                 }`}
               />
             )}
-            {isLive && activeYoutubeUrl && (
-              <iframe src={activeYoutubeUrl} className="absolute inset-0 h-full w-full"
+
+            {/* IDN server */}
+            {isLive && activeServer === "idn" && (
+              idnLoading ? (
+                <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/60 gap-3">
+                  <div className="h-8 w-8 animate-spin rounded-full border-2 border-white/20 border-t-white" />
+                  <p className="text-xs text-white/50">Memuat stream IDN...</p>
+                </div>
+              ) : idnError ? (
+                <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/70 gap-3">
+                  <svg className="h-8 w-8 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 9v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  <p className="text-xs text-white/50">{idnError}</p>
+                  <button onClick={loadIdnStream} className="rounded-lg bg-white/10 px-3 py-1.5 text-xs text-white hover:bg-white/20 transition-colors">
+                    Coba Lagi
+                  </button>
+                </div>
+              ) : idnStreamUrl ? (
+                <HlsPlayer
+                  src={idnStreamUrl}
+                  token={idnStreamData?.token}
+                  className="absolute inset-0 h-full w-full object-contain bg-black"
+                />
+              ) : null
+            )}
+
+            {/* RTMP server */}
+            {isLive && activeServer === "rtmp" && rtmpUrl && (
+              <HlsPlayer src={rtmpUrl} className="absolute inset-0 h-full w-full object-contain bg-black" />
+            )}
+            {isLive && activeServer === "rtmp" && !rtmpUrl && (
+              <div className="absolute inset-0 flex items-center justify-center bg-black/70">
+                <p className="text-sm text-white/40">Stream RTMP tidak tersedia</p>
+              </div>
+            )}
+
+            {/* YouTube server */}
+            {isLive && activeServer === "youtube" && youtubeUrl && (
+              <iframe src={youtubeUrl} className="absolute inset-0 h-full w-full"
                 allow="autoplay; encrypted-media; fullscreen" allowFullScreen />
             )}
-            {isLive && activeStreamUrl && !activeYoutubeUrl && (
-              <HlsPlayer src={activeStreamUrl} className="absolute inset-0 h-full w-full object-contain bg-black" />
+            {isLive && activeServer === "youtube" && !youtubeUrl && (
+              <div className="absolute inset-0 flex items-center justify-center bg-black/70">
+                <p className="text-sm text-white/40">Stream YouTube tidak tersedia</p>
+              </div>
             )}
-            {isLive && !activeStreamUrl && !activeYoutubeUrl && fallbackUrl && (
+
+            {/* Fallback (legacy rtmp field from old API) */}
+            {isLive && activeServer === "rtmp" && !rtmpUrl && fallbackUrl && (
               <HlsPlayer src={fallbackUrl} className="absolute inset-0 h-full w-full object-contain bg-black" />
             )}
+
+            {/* Countdown overlay */}
             {showCountdown && (
               <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/60">
                 <p className="mb-4 text-xs font-semibold tracking-[0.2em] text-white/70 uppercase">Siaran Dimulai Dalam</p>
@@ -1002,6 +1264,8 @@ function PlayerView({
                 {show.scheduled_at && <p className="mt-4 text-xs text-white/30">{formatSchedule(show.scheduled_at)}</p>}
               </div>
             )}
+
+            {/* Ended overlay */}
             {isEnded && (
               <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/70">
                 <svg className="h-10 w-10 text-white/30" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -1010,24 +1274,25 @@ function PlayerView({
                 <p className="mt-3 text-sm font-medium text-white/50">Show telah selesai</p>
               </div>
             )}
-            {isLive && streamData?.sources && streamData.sources.length > 1 && (
-              <div className="absolute bottom-3 right-3 flex gap-2">
-                {streamData.sources.map(s => (
-                  <button key={s.type} onClick={() => setActiveSource(s.type as "rtmp" | "youtube")}
-                    className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium transition-colors ${
-                      activeSource === s.type ? "bg-white text-black" : "bg-white/10 text-white/70 hover:bg-white/20"
-                    }`}>
-                    {s.label}
-                  </button>
-                ))}
+
+            {/* IDN quality selector (bottom-right in-player) */}
+            {isLive && activeServer === "idn" && idnStreamData && (idnStreamData.qualities.length > 1) && (
+              <div className="absolute bottom-3 right-3 z-20">
+                <IdnQualitySelector
+                  qualities={idnStreamData.qualities}
+                  currentQuality={idnCurrentQuality}
+                  onSelect={handleIdnQualityChange}
+                />
               </div>
             )}
           </div>
 
+          {/* ── Info bar (title + server selector) ── */}
           <div className="px-4 py-4 space-y-3 border-b border-white/10">
             <div className="flex items-start justify-between gap-3">
               <div className="space-y-1.5 min-w-0">
                 <h1 className="text-base font-semibold leading-snug">{show.title}</h1>
+                {/* Status badges */}
                 <div className="flex items-center gap-2 flex-wrap">
                   {isLive && (
                     <span className="flex items-center gap-1 rounded-full bg-red-500/20 px-2.5 py-0.5 text-xs font-semibold text-red-400">
@@ -1041,6 +1306,8 @@ function PlayerView({
                   )}
                 </div>
               </div>
+
+              {/* Creator avatar */}
               <div className="flex items-center gap-2 shrink-0">
                 {show.creator.image_url && (
                   <img src={show.creator.image_url} alt={show.creator.name} className="h-9 w-9 rounded-full object-cover ring-1 ring-white/20" />
@@ -1051,6 +1318,33 @@ function PlayerView({
                 </div>
               </div>
             </div>
+
+            {/* ── SERVER SELECTOR ── */}
+            {isLive && (
+              <div className="flex items-center justify-between gap-3 flex-wrap">
+                <ServerSelector
+                  activeServer={activeServer}
+                  onChange={handleServerChange}
+                  hasRtmp={hasRtmp}
+                  hasYoutube={hasYoutube}
+                  loading={idnLoading && activeServer === "idn"}
+                />
+                {/* IDN stream note */}
+                {activeServer === "idn" && idnStreamData && (
+                  <p className="text-[10px] text-white/25 flex items-center gap-1">
+                    <span className="inline-flex h-1.5 w-1.5 rounded-full bg-green-500" />
+                    GiStream · {idnStreamData.qualities.length} kualitas tersedia
+                  </p>
+                )}
+                {activeServer === "idn" && idnError && (
+                  <button onClick={loadIdnStream} className="text-[10px] text-red-400 hover:text-red-300 underline transition-colors">
+                    Retry
+                  </button>
+                )}
+              </div>
+            )}
+
+            {/* Scheduled time */}
             {isScheduled && show.scheduled_at && (
               <div className="flex items-center gap-2 text-xs text-white/50">
                 <svg className="h-3.5 w-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -1059,18 +1353,23 @@ function PlayerView({
                 {formatSchedule(show.scheduled_at)}
               </div>
             )}
+
+            {/* Description */}
             {show.idnliveplus?.description && (
               <p className="text-xs text-white/50 leading-relaxed whitespace-pre-line line-clamp-3">
                 {show.idnliveplus.description.trim()}
               </p>
             )}
-            {isLive && !activeStreamUrl && !activeYoutubeUrl && !fallbackUrl && (
+
+            {/* No stream warning (IDN) */}
+            {isLive && activeServer === "idn" && !idnLoading && !idnStreamUrl && !idnError && (
               <div className="rounded-lg bg-yellow-500/10 border border-yellow-500/20 px-3 py-2 text-xs text-yellow-400">
-                Stream belum tersedia. Admin perlu mengatur sumber stream untuk show ini.
+                Stream IDN belum tersedia untuk show ini.
               </div>
             )}
           </div>
 
+          {/* ── Access info bar ── */}
           <div className="px-4 py-3 flex items-center justify-between">
             <p className="text-xs text-white/20">
               {accessMode === "membership"
@@ -1085,6 +1384,7 @@ function PlayerView({
           </div>
         </div>
 
+        {/* ── Chat panel ── */}
         <div className="w-full lg:w-80 xl:w-96 border-t lg:border-t-0 lg:border-l border-white/10 flex flex-col shrink-0 lg:h-[calc(100vh-57px)] lg:sticky lg:top-[57px]">
           <LiveChatPanel
             showId={show.showId}
@@ -1164,44 +1464,36 @@ export default function LiveTokenPage() {
     } catch { return null }
   }, [liveId])
 
- const consumeToken = useCallback(async (info: LiveTokenInfo): Promise<boolean> => {
-  try {
-    const res  = await fetch(`${API_BASE}/live/${liveId}?apikey=${API_KEY}`)
-    const data = await res.json()
-    if (data.status) {
-      writeCachedAccess({
-        liveId, showId: info.show_id, consumedAt: Date.now(),
-        expiresAt: info.expires_at ? new Date(info.expires_at).getTime() : null,
-      })
-      return true
-    }
-
-    // ── FIX: endpoint "use" kadang return MAX_USES_REACHED meski
-    // uses_count masih < max_uses. Validasi ulang pakai /info sebelum
-    // benar-benar menolak — sumber kebenaran adalah uses_count vs max_uses.
-    if (data.code === "MAX_USES_REACHED") {
-      const freshInfo = await fetchTokenInfo()
-      const checkInfo = freshInfo ?? info
-
-      if (!isTokenMaxed(checkInfo)) {
-        // uses_count < max_uses -> token sebenarnya masih valid, izinkan
+  const consumeToken = useCallback(async (info: LiveTokenInfo): Promise<boolean> => {
+    try {
+      const res  = await fetch(`${API_BASE}/live/${liveId}?apikey=${API_KEY}`)
+      const data = await res.json()
+      if (data.status) {
         writeCachedAccess({
-          liveId, showId: checkInfo.show_id, consumedAt: Date.now(),
-          expiresAt: checkInfo.expires_at ? new Date(checkInfo.expires_at).getTime() : null,
+          liveId, showId: info.show_id, consumedAt: Date.now(),
+          expiresAt: info.expires_at ? new Date(info.expires_at).getTime() : null,
         })
-        setTokenInfo(checkInfo)
         return true
       }
-
-      setErrorMsg(`Token sudah mencapai batas penggunaan (${parseTokenInt(checkInfo.max_uses)}x)`)
-      return false
+      if (data.code === "MAX_USES_REACHED") {
+        const freshInfo = await fetchTokenInfo()
+        const checkInfo = freshInfo ?? info
+        if (!isTokenMaxed(checkInfo)) {
+          writeCachedAccess({
+            liveId, showId: checkInfo.show_id, consumedAt: Date.now(),
+            expiresAt: checkInfo.expires_at ? new Date(checkInfo.expires_at).getTime() : null,
+          })
+          setTokenInfo(checkInfo)
+          return true
+        }
+        setErrorMsg(`Token sudah mencapai batas penggunaan (${parseTokenInt(checkInfo.max_uses)}x)`)
+        return false
+      }
+      setErrorMsg(data.message || "Token tidak valid"); return false
+    } catch {
+      setErrorMsg("Gagal menghubungi server"); return false
     }
-
-    setErrorMsg(data.message || "Token tidak valid"); return false
-  } catch {
-    setErrorMsg("Gagal menghubungi server"); return false
-  }
-}, [liveId, fetchTokenInfo])
+  }, [liveId, fetchTokenInfo])
 
   const handleEmailAccessGranted = useCallback(async (email: string) => {
     setAccessEmail(email); setAccessMode("email"); setVerifyState("email_access")
@@ -1217,7 +1509,6 @@ export default function LiveTokenPage() {
   const runVerification = useCallback(async () => {
     setVerifyState("checking"); consumedRef.current = false
 
-    // 0. Cache email access
     const cachedEmail = readCachedEmailAccess(null)
     if (cachedEmail) {
       setAccessEmail(cachedEmail.email); setAccessMode("email"); setVerifyState("email_access")
@@ -1226,7 +1517,6 @@ export default function LiveTokenPage() {
       return
     }
 
-    // Route: /live/memb
     if (isMembRoute) {
       const user = getUserFromStorage()
       if (!user || !isMembershipActive(user.membership_type, user.membership_expired_at)) {
@@ -1238,13 +1528,11 @@ export default function LiveTokenPage() {
       return
     }
 
-    // Tidak ada token → form email
     if (!hasTokenInUrl) {
       const s = await findShow(null); if (s) setShow(s)
       setVerifyState("email_form"); return
     }
 
-    // Cache hit
     const cached = readCachedAccess(liveId)
     if (cached) {
       setAccessMode("token"); setVerifyState("granted")
@@ -1253,7 +1541,6 @@ export default function LiveTokenPage() {
       return
     }
 
-    // Membership bypass
     const user = getUserFromStorage()
     if (user && isMembershipActive(user.membership_type, user.membership_expired_at)) {
       setAccessMode("membership"); setVerifyState("membership")
@@ -1263,7 +1550,6 @@ export default function LiveTokenPage() {
       return
     }
 
-    // Fetch token info
     const info = await fetchTokenInfo()
     if (!info) { setErrorMsg("Token tidak ditemukan"); setVerifyState("denied"); return }
     setTokenInfo(info)
@@ -1271,7 +1557,6 @@ export default function LiveTokenPage() {
     if (!info.is_active) { setErrorMsg("Token dinonaktifkan admin"); setVerifyState("denied"); return }
     if (info.is_expired)  { setErrorMsg("Token sudah expired");       setVerifyState("denied"); return }
 
-    // ── FIX: hitung is_maxed client-side — API return max_uses/uses_count sebagai string ──
     if (isTokenMaxed(info)) {
       setErrorMsg(`Token sudah mencapai batas penggunaan (${parseTokenInt(info.max_uses)}x)`)
       setVerifyState("denied"); return

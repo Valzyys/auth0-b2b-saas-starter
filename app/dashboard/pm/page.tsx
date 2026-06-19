@@ -264,9 +264,9 @@ function RankDelta({ status, change }: { status: PmMember["rank_status"]; change
 
 function MemberSkeleton() {
   return (
-    <div className="flex flex-col overflow-hidden rounded-xl border border-border bg-card animate-pulse">
-      <div className="h-40 bg-muted" />
-      <div className="space-y-2 p-3.5">
+    <div className="flex min-w-0 flex-col overflow-hidden rounded-xl border border-border bg-card animate-pulse">
+      <div className="h-28 sm:h-40 bg-muted" />
+      <div className="space-y-2 p-2.5 sm:p-3.5">
         <div className="h-3 w-3/4 rounded bg-muted" />
         <div className="h-2.5 w-2/5 rounded bg-muted" />
         <div className="h-7 w-full rounded bg-muted mt-1" />
@@ -295,10 +295,10 @@ function MemberCard({
       type="button"
       onClick={() => onSelect(member)}
       disabled={busy}
-      className="group flex flex-col overflow-hidden rounded-xl border border-border bg-card text-left shadow-sm transition-shadow hover:shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
+      className="group flex min-w-0 flex-col overflow-hidden rounded-xl border border-border bg-card text-left shadow-sm transition-shadow hover:shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
     >
       {/* Foto — kotak penuh di atas card */}
-      <div className="relative h-40 w-full overflow-hidden bg-muted shrink-0">
+      <div className="relative h-28 sm:h-40 w-full overflow-hidden bg-muted shrink-0">
         {!imgError && member.profile_image ? (
           <img
             src={member.profile_image}
@@ -311,46 +311,46 @@ function MemberCard({
           />
         ) : (
           <div className="flex h-full items-center justify-center">
-            <span className="text-3xl font-semibold text-muted-foreground/40">
+            <span className="text-2xl sm:text-3xl font-semibold text-muted-foreground/40">
               {initials(member.given_name || member.name)}
             </span>
           </div>
         )}
 
-        <span className="absolute top-2.5 left-2.5 rounded-full bg-black/70 px-2 py-0.5 text-xs font-bold text-white tabular-nums">
+        <span className="absolute top-1.5 left-1.5 sm:top-2.5 sm:left-2.5 rounded-full bg-black/70 px-1.5 sm:px-2 py-0.5 text-[10px] sm:text-xs font-bold text-white tabular-nums">
           #{member.rank}
         </span>
 
         {member.is_owned && (
-          <span className="absolute top-2.5 right-2.5 flex items-center gap-1 rounded-full bg-green-500 px-2 py-0.5 text-xs font-semibold text-white">
-            <IconCheck className="h-3 w-3" />
-            Dimiliki
+          <span className="absolute top-1.5 right-1.5 sm:top-2.5 sm:right-2.5 flex items-center gap-1 rounded-full bg-green-500 px-1.5 sm:px-2 py-0.5 text-[10px] sm:text-xs font-semibold text-white">
+            <IconCheck className="h-2.5 w-2.5 sm:h-3 sm:w-3" />
+            <span className="hidden sm:inline">Dimiliki</span>
           </span>
         )}
       </div>
 
       {/* Konten */}
-      <div className="flex flex-1 flex-col gap-2 p-3.5">
-        <div>
-          <p className="text-sm font-semibold leading-tight text-foreground">
+      <div className="flex flex-1 min-w-0 flex-col gap-1.5 sm:gap-2 p-2.5 sm:p-3.5">
+        <div className="min-w-0">
+          <p className="text-xs sm:text-sm font-semibold leading-tight text-foreground truncate">
             {member.given_name || member.name}
           </p>
-          <p className="text-xs text-muted-foreground line-clamp-1">{member.name}</p>
+          <p className="text-[10.5px] sm:text-xs text-muted-foreground line-clamp-1">{member.name}</p>
         </div>
 
-        <div className="flex items-center justify-between gap-2">
-          <span className="rounded-full border border-border bg-muted px-2.5 py-0.5 text-[10.5px] font-medium text-muted-foreground">
+        <div className="flex items-center justify-between gap-1.5 sm:gap-2 min-w-0">
+          <span className="min-w-0 truncate rounded-full border border-border bg-muted px-1.5 sm:px-2.5 py-0.5 text-[9px] sm:text-[10.5px] font-medium text-muted-foreground">
             {member.tier_label.replace(/^[^\w]+\s*/u, "")}
           </span>
           <RankDelta status={member.rank_status} change={member.rank_change} />
         </div>
 
-        <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+        <div className="flex items-center gap-1.5 text-[10px] sm:text-[11px] text-muted-foreground">
           <IconChat className="h-3 w-3 shrink-0" />
-          {member.messages_per_week.toLocaleString("id-ID")} pesan/minggu
+          <span className="truncate">{member.messages_per_week.toLocaleString("id-ID")} pesan/minggu</span>
         </div>
 
-        <div className="mt-auto pt-2 border-t border-border text-center text-xs font-semibold text-primary">
+        <div className="mt-auto pt-1.5 sm:pt-2 border-t border-border text-center text-[11px] sm:text-xs font-semibold text-primary">
           {member.is_owned ? "Perpanjang akses" : "Pilih paket"}
         </div>
       </div>
@@ -658,6 +658,7 @@ function QrisModal({
                   <img
                     src={payment.qris_image_url}
                     alt="QR Pembayaran"
+                    crossOrigin="anonymous"
                     referrerPolicy="no-referrer"
                     className="h-52 w-52 rounded-lg border border-border object-contain bg-white"
                   />
@@ -968,7 +969,7 @@ export default function PmPurchasePage() {
   const pendingCount = history.filter((o) => o.status === "pending").length
 
   return (
-    <div className="max-w-5xl mx-auto px-4 py-8 space-y-6">
+    <div className="max-w-5xl mx-auto px-3 sm:px-4 py-6 sm:py-8 space-y-5 sm:space-y-6 overflow-x-hidden">
 
       {/* Header */}
       <div className="space-y-1">
@@ -976,7 +977,7 @@ export default function PmPurchasePage() {
           <IconCrown className="h-3.5 w-3.5" />
           Private Message
         </span>
-        <h1 className="text-2xl font-semibold">Beli akses PM member JKT48</h1>
+        <h1 className="text-xl sm:text-2xl font-semibold">Beli akses PM member JKT48</h1>
         <p className="text-sm text-muted-foreground max-w-xl">
           Aktivitas chat mingguan menentukan urutan di bawah. Pilih member, pilih durasi, bayar via QRIS.
         </p>
@@ -1025,23 +1026,23 @@ export default function PmPurchasePage() {
       {tab === "members" && (
         <>
           <div className="space-y-3.5 -mt-2">
-            <label className="flex max-w-xs items-center gap-2 rounded-lg border border-border bg-background px-3 py-2">
+            <label className="flex w-full sm:max-w-xs items-center gap-2 rounded-lg border border-border bg-background px-3 py-2">
               <IconSearch className="h-4 w-4 shrink-0 text-muted-foreground" />
               <input
                 type="text"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder="Cari nama member…"
-                className="w-full bg-transparent text-sm outline-none placeholder:text-muted-foreground"
+                className="w-full min-w-0 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
               />
             </label>
 
-            <div className="flex gap-2 overflow-x-auto pb-1">
+            <div className="flex gap-2 overflow-x-auto pb-1 -mx-3 px-3 sm:mx-0 sm:px-0">
               {tierTabs.map((t) => (
                 <button
                   key={t.key}
                   onClick={() => setTierFilter(t.key)}
-                  className={`whitespace-nowrap rounded-full border px-3.5 py-1.5 text-xs font-medium transition-colors ${
+                  className={`shrink-0 whitespace-nowrap rounded-full border px-3.5 py-1.5 text-xs font-medium transition-colors ${
                     tierFilter === t.key
                       ? "border-primary bg-primary/10 text-primary"
                       : "border-border bg-background text-muted-foreground hover:text-foreground"
@@ -1060,7 +1061,7 @@ export default function PmPurchasePage() {
           )}
 
           {loading ? (
-            <div className="grid gap-4 grid-cols-2 sm:grid-cols-3 lg:grid-cols-4">
+            <div className="grid gap-2.5 sm:gap-4 grid-cols-2 sm:grid-cols-3 lg:grid-cols-4">
               {Array.from({ length: 8 }).map((_, i) => <MemberSkeleton key={i} />)}
             </div>
           ) : filteredMembers.length === 0 ? (
@@ -1069,7 +1070,7 @@ export default function PmPurchasePage() {
               <p>Tidak ada member yang cocok dengan pencarian.</p>
             </div>
           ) : (
-            <div className="grid gap-4 grid-cols-2 sm:grid-cols-3 lg:grid-cols-4">
+            <div className="grid gap-2.5 sm:gap-4 grid-cols-2 sm:grid-cols-3 lg:grid-cols-4">
               {filteredMembers.map((member) => (
                 <MemberCard
                   key={member.idol_id}

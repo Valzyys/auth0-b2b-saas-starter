@@ -6,7 +6,7 @@ import { useEffect, useState, useRef, useCallback } from "react"
 const API_BASE = "https://v5.jkt48connect.com/api/team48"
 const API_KEY  = "JKTCONNECT"
 
-// ─── Types ─────────────────────────────────────────────────
+// ─── Types — disesuaikan dengan struktur API nyata ──────────
 
 interface OwnedPm {
   idol_identifier: string
@@ -17,30 +17,56 @@ interface OwnedPm {
 }
 
 interface PmAttachment {
-  file_path:    string
-  content_type: string
-  file_name?:   string
+  file_path:  string
+  file_type:  string   // ← API pakai file_type, bukan content_type
+  file_name:  string | null
+  width:      number | null
+  height:     number | null
+}
+
+interface PollOption {
+  option_id:   string
+  option_text: string
+  vote_count:  number
+  voters:      { user_id: string; name: string; profile_image: string | null }[]
+}
+
+interface PmPoll {
+  polling_id:             string
+  question:               string
+  allow_multiple_answers: boolean
+  options:                PollOption[]
+  total_votes:            number
+  my_votes:               string[]
+  created_by:             { user_id: string; name: string }
 }
 
 interface PmMessage {
-  message_id:  string | number
-  sender_type: "idol" | "fan" | string
-  sender_name: string
+  id:          string          // ← field-nya "id", bukan "message_id"
+  type:        string
   body:        string
   created_at:  string
+  updated_at:  string
   attachments: PmAttachment[]
+  poll:        PmPoll | null
 }
 
-interface PmMessagesData {
+// Struktur response GET /pm/messages/:idol_name
+// json.data.messages — bukan json.data langsung
+interface PmApiResponse {
+  status:          boolean
   idol_name:       string
   identifier:      string
   conversation_id: string
   page:            number
   fetched_at:      string
   data: {
-    messages:   PmMessage[]
-    total_page: number
+    success:    boolean
     page:       number
+    pageSize:   number
+    count:      number
+    has_more:   boolean
+    messages:   PmMessage[]
   }
 }
 
@@ -60,6 +86,15 @@ async function fetchWithAuth(url: string): Promise<Response> {
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
     },
   })
+}
+
+// Strip invisible unicode yang dikirim PM API (zero-width chars dll)
+function cleanBody(text: string): string {
+  if (!text) return ""
+  return text
+    .replace(/[\u200B-\u200D\uFEFF\u2060\u180E\u00AD]/g, "") // zero-width
+    .replace(/[\u{E0000}-\u{E007F}]/gu, "")                   // tag chars
+    .trim()
 }
 
 function formatDateShort(dateStr: string): string {
@@ -85,17 +120,23 @@ function formatChatDate(dateStr: string): string {
 }
 
 function initials(name: string): string {
-  return name.trim().split(" ").map(w => w[0]).slice(0, 2).join("").toUpperCase()
+  return (name || "?").trim().split(" ").map(w => w[0]).slice(0, 2).join("").toUpperCase()
 }
 
-function isImageType(contentType: string, filePath: string): boolean {
-  if (contentType?.startsWith("image/")) return true
+// Gunakan file_type (bukan content_type) sesuai API
+function isImageType(fileType: string | null, filePath: string): boolean {
+  if (fileType?.startsWith("image/")) return true
   return /\.(jpe?g|png|gif|webp|avif)(\?|$)/i.test(filePath || "")
 }
 
-function isVideoType(contentType: string, filePath: string): boolean {
-  if (contentType?.startsWith("video/")) return true
+function isVideoType(fileType: string | null, filePath: string): boolean {
+  if (fileType?.startsWith("video/")) return true
   return /\.(mp4|mov|webm|ogg)(\?|$)/i.test(filePath || "")
+}
+
+function isAudioType(fileType: string | null, filePath: string): boolean {
+  if (fileType?.startsWith("audio/")) return true
+  return /\.(mp3|m4a|ogg|wav|aac|flac)(\?|$)/i.test(filePath || "")
 }
 
 // ─── Icons ─────────────────────────────────────────────────
@@ -158,26 +199,24 @@ function IconCalendar(props: React.SVGProps<SVGSVGElement>) {
     </svg>
   )
 }
-function IconImage(props: React.SVGProps<SVGSVGElement>) {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" {...props}>
-      <rect x="3" y="3" width="18" height="18" rx="2" />
-      <circle cx="8.5" cy="8.5" r="1.5" />
-      <path strokeLinecap="round" strokeLinejoin="round" d="M21 15l-5-5L5 21" />
-    </svg>
-  )
-}
-function IconVideo(props: React.SVGProps<SVGSVGElement>) {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" {...props}>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M15 10l4.55-2.6A1 1 0 0121 8.37v7.26a1 1 0 01-1.45.9L15 14M4 8a2 2 0 012-2h9a2 2 0 012 2v8a2 2 0 01-2 2H6a2 2 0 01-2-2V8z" />
-    </svg>
-  )
-}
 function IconShop(props: React.SVGProps<SVGSVGElement>) {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" {...props}>
       <path strokeLinecap="round" strokeLinejoin="round" d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z" />
+    </svg>
+  )
+}
+function IconVolume(props: React.SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" {...props}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M9 19V6l12-3v13M9 19c0 1.1-.9 2-2 2s-2-.9-2-2 .9-2 2-2 2 .9 2 2zm12-3c0 1.1-.9 2-2 2s-2-.9-2-2 .9-2 2-2 2 .9 2 2z" />
+    </svg>
+  )
+}
+function IconBarChart(props: React.SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" {...props}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M18 20V10M12 20V4M6 20v-6" />
     </svg>
   )
 }
@@ -215,25 +254,71 @@ function Lightbox({ src, onClose }: { src: string; onClose: () => void }) {
   )
 }
 
+// ─── Poll Bubble ────────────────────────────────────────────
+
+function PollBubble({ poll }: { poll: PmPoll }) {
+  const maxVotes = Math.max(...poll.options.map(o => o.vote_count), 1)
+
+  return (
+    <div className="mt-1.5 w-full max-w-[260px] rounded-xl border border-border bg-background/80 p-3 text-left">
+      <div className="flex items-center gap-1.5 mb-2.5">
+        <IconBarChart className="h-3.5 w-3.5 text-primary shrink-0" />
+        <p className="text-xs font-semibold text-foreground leading-snug">{poll.question}</p>
+      </div>
+      <div className="space-y-2">
+        {poll.options.map((opt) => {
+          const pct = poll.total_votes > 0
+            ? Math.round((opt.vote_count / poll.total_votes) * 100)
+            : 0
+          const barWidth = poll.total_votes > 0
+            ? Math.round((opt.vote_count / maxVotes) * 100)
+            : 0
+          return (
+            <div key={opt.option_id} className="space-y-0.5">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-[11px] font-medium text-foreground truncate">{opt.option_text}</span>
+                <span className="text-[10px] text-muted-foreground tabular-nums shrink-0">{pct}%</span>
+              </div>
+              <div className="h-1.5 w-full rounded-full bg-muted overflow-hidden">
+                <div
+                  className="h-full rounded-full bg-primary transition-all"
+                  style={{ width: `${barWidth}%` }}
+                />
+              </div>
+            </div>
+          )
+        })}
+      </div>
+      <p className="mt-2.5 text-[10px] text-muted-foreground">
+        {poll.total_votes} suara · {poll.allow_multiple_answers ? "Multi pilih" : "Satu pilih"}
+      </p>
+    </div>
+  )
+}
+
 // ─── Attachment Bubble ──────────────────────────────────────
 
 function AttachmentBubble({ att }: { att: PmAttachment }) {
   const [lightbox, setLightbox] = useState<string | null>(null)
+  const [imgError, setImgError] = useState(false)
 
-  if (isImageType(att.content_type, att.file_path)) {
+  // Gunakan file_type (field yang benar dari API)
+  if (isImageType(att.file_type, att.file_path) && !imgError) {
     return (
       <>
         <button
           type="button"
-          className="mt-1.5 block overflow-hidden rounded-xl border border-white/10 hover:opacity-90 transition-opacity"
+          className="mt-1 block overflow-hidden rounded-xl border border-white/10 hover:opacity-90 transition-opacity"
           onClick={() => setLightbox(att.file_path)}
         >
           <img
             src={att.file_path}
-            alt={att.file_name || "Gambar"}
+            alt="Gambar"
             referrerPolicy="no-referrer"
-            className="max-h-52 max-w-[220px] object-cover"
+            crossOrigin="anonymous"
+            className="max-h-56 max-w-[240px] rounded-xl object-cover block"
             loading="lazy"
+            onError={() => setImgError(true)}
           />
         </button>
         {lightbox && <Lightbox src={lightbox} onClose={() => setLightbox(null)} />}
@@ -241,73 +326,88 @@ function AttachmentBubble({ att }: { att: PmAttachment }) {
     )
   }
 
-  if (isVideoType(att.content_type, att.file_path)) {
+  if (isVideoType(att.file_type, att.file_path)) {
     return (
       <video
         src={att.file_path}
         controls
-        className="mt-1.5 max-h-52 max-w-[220px] rounded-xl border border-white/10 object-cover"
+        className="mt-1 max-h-56 max-w-[240px] rounded-xl border border-border object-cover"
       />
     )
   }
 
+  if (isAudioType(att.file_type, att.file_path)) {
+    return (
+      <div className="mt-1 flex items-center gap-2 rounded-xl border border-border bg-muted/50 px-3 py-2.5 max-w-[240px]">
+        <IconVolume className="h-4 w-4 shrink-0 text-primary" />
+        <audio
+          src={att.file_path}
+          controls
+          className="h-7 w-full min-w-0"
+          style={{ accentColor: "hsl(var(--primary))" }}
+        />
+      </div>
+    )
+  }
+
+  // Fallback: link download
   return (
     <a
       href={att.file_path}
       target="_blank"
       rel="noopener noreferrer"
-      className="mt-1.5 flex items-center gap-2 rounded-lg border border-border bg-muted/50 px-3 py-2 text-xs text-primary underline-offset-2 hover:underline"
+      className="mt-1 flex items-center gap-2 rounded-lg border border-border bg-muted/50 px-3 py-2 text-xs text-primary hover:underline max-w-[240px]"
     >
-      <IconImage className="h-4 w-4 shrink-0" />
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-4 w-4 shrink-0">
+        <path strokeLinecap="round" strokeLinejoin="round" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
+      </svg>
       {att.file_name || "Lampiran"}
     </a>
   )
 }
 
 // ─── Message Bubble ─────────────────────────────────────────
+// Semua pesan dari API dianggap dari idol (tidak ada sender_type di struktur nyata).
+// body mengandung invisible chars — wajib strip dulu.
 
 function MessageBubble({ msg, idolName }: { msg: PmMessage; idolName: string }) {
-  const isIdol = msg.sender_type === "idol"
+  const body = cleanBody(msg.body)
+  const hasAttachments = Array.isArray(msg.attachments) && msg.attachments.length > 0
+  const hasPoll = !!msg.poll
+  const hasBody = body.length > 0
+
+  if (!hasBody && !hasAttachments && !hasPoll) return null
 
   return (
-    <div className={`flex gap-2 ${isIdol ? "justify-start" : "justify-end"}`}>
-      {/* Avatar idol — sisi kiri */}
-      {isIdol && (
-        <div className="flex-shrink-0 mt-auto">
-          <div className="h-7 w-7 rounded-full bg-primary/20 flex items-center justify-center">
-            <span className="text-[10px] font-bold text-primary">{initials(idolName)}</span>
-          </div>
+    <div className="flex gap-2 justify-start">
+      {/* Avatar idol */}
+      <div className="flex-shrink-0 self-end mb-1">
+        <div className="h-7 w-7 rounded-full bg-primary/20 flex items-center justify-center">
+          <span className="text-[10px] font-bold text-primary">{initials(idolName)}</span>
         </div>
-      )}
-
-      <div className={`flex max-w-[75%] flex-col ${isIdol ? "items-start" : "items-end"}`}>
-        {/* Bubble */}
-        <div
-          className={`rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed ${
-            isIdol
-              ? "rounded-tl-sm bg-card border border-border text-foreground"
-              : "rounded-tr-sm bg-primary text-primary-foreground"
-          }`}
-        >
-          {msg.body && <p className="whitespace-pre-wrap break-words">{msg.body}</p>}
-
-          {/* Attachments */}
-          {Array.isArray(msg.attachments) && msg.attachments.length > 0 && (
-            <div className="flex flex-col gap-1">
-              {msg.attachments.map((att, i) => (
-                <AttachmentBubble key={i} att={att} />
-              ))}
-            </div>
-          )}
-        </div>
-
-        <span className="mt-1 text-[10px] text-muted-foreground tabular-nums">
-          {formatTime(msg.created_at)}
-        </span>
       </div>
 
-      {/* Spacer fan — sisi kanan (no avatar) */}
-      {!isIdol && <div className="w-7 flex-shrink-0" />}
+      <div className="flex max-w-[78%] flex-col items-start">
+        {/* Bubble teks */}
+        {hasBody && (
+          <div className="rounded-2xl rounded-tl-sm border border-border bg-card px-3.5 py-2.5 text-sm leading-relaxed text-foreground">
+            <p className="whitespace-pre-wrap break-words">{body}</p>
+          </div>
+        )}
+
+        {/* Attachment(s) */}
+        {hasAttachments && msg.attachments.map((att, i) => (
+          <AttachmentBubble key={i} att={att} />
+        ))}
+
+        {/* Poll */}
+        {hasPoll && msg.poll && <PollBubble poll={msg.poll} />}
+
+        {/* Timestamp */}
+        <span className="mt-1 text-[10px] text-muted-foreground tabular-nums">
+          {formatTime(msg.updated_at || msg.created_at)}
+        </span>
+      </div>
     </div>
   )
 }
@@ -316,9 +416,11 @@ function MessageBubble({ msg, idolName }: { msg: PmMessage; idolName: string }) 
 
 function DateSeparator({ label }: { label: string }) {
   return (
-    <div className="flex items-center gap-3 py-3">
+    <div className="flex items-center gap-3 py-2">
       <div className="h-px flex-1 bg-border" />
-      <span className="text-[11px] font-medium text-muted-foreground">{label}</span>
+      <span className="rounded-full border border-border bg-muted px-3 py-0.5 text-[10.5px] font-medium text-muted-foreground">
+        {label}
+      </span>
       <div className="h-px flex-1 bg-border" />
     </div>
   )
@@ -327,12 +429,16 @@ function DateSeparator({ label }: { label: string }) {
 // ─── Chat View ──────────────────────────────────────────────
 
 function ChatView({ idol, onBack }: { idol: OwnedPm; onBack: () => void }) {
-  const [data, setData]         = useState<PmMessagesData | null>(null)
-  const [loading, setLoading]   = useState(true)
-  const [error, setError]       = useState<string | null>(null)
-  const [page, setPage]         = useState(1)
-  const [totalPage, setTotalPage] = useState(1)
-  const bottomRef               = useRef<HTMLDivElement>(null)
+  const [messages, setMessages]     = useState<PmMessage[]>([])
+  const [loading, setLoading]       = useState(true)
+  const [error, setError]           = useState<string | null>(null)
+  const [page, setPage]             = useState(1)
+  const [hasMore, setHasMore]       = useState(false)
+  const [totalCount, setTotalCount] = useState(0)
+  const [pageSize, setPageSize]     = useState(25)
+  const bottomRef                   = useRef<HTMLDivElement>(null)
+
+  const totalPage = Math.max(1, Math.ceil(totalCount / pageSize))
 
   const fetchMessages = useCallback(async (p: number) => {
     setLoading(true)
@@ -341,13 +447,23 @@ function ChatView({ idol, onBack }: { idol: OwnedPm; onBack: () => void }) {
       const res = await fetchWithAuth(
         `${API_BASE}/pm/messages/${encodeURIComponent(idol.idol_name)}?apikey=${API_KEY}&page=${p}`
       )
-      const json = await res.json()
+      const json: PmApiResponse = await res.json()
+
       if (!json.status) {
-        setError(json.message || "Gagal memuat pesan.")
+        setError(json.message ?? "Gagal memuat pesan.")
         return
       }
-      setData(json)
-      setTotalPage(json.data?.total_page || 1)
+
+      // Ambil dari json.data.messages (bukan json.data langsung)
+      const rawMsgs = json.data?.messages ?? []
+
+      // API return terbaru di index 0 — reverse agar urutan kronologis (lama di atas)
+      const sorted = [...rawMsgs].reverse()
+
+      setMessages(sorted)
+      setHasMore(json.data?.has_more ?? false)
+      setTotalCount(json.data?.count ?? rawMsgs.length)
+      setPageSize(json.data?.pageSize ?? 25)
     } catch (_) {
       setError("Terjadi kesalahan jaringan.")
     } finally {
@@ -359,35 +475,29 @@ function ChatView({ idol, onBack }: { idol: OwnedPm; onBack: () => void }) {
     fetchMessages(page)
   }, [page, fetchMessages])
 
-  // Scroll to bottom saat pesan pertama kali dimuat
+  // Scroll ke bawah setiap kali messages baru dimuat
   useEffect(() => {
-    if (!loading && data && page === 1) {
-      bottomRef.current?.scrollIntoView({ behavior: "instant" })
+    if (!loading && messages.length > 0) {
+      setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: "smooth" }), 80)
     }
-  }, [loading, data, page])
+  }, [loading, messages])
 
-  // Group messages by date
-  const groupedMessages = (() => {
-    if (!data?.data?.messages) return []
-    const msgs = [...data.data.messages]
-    const groups: { date: string; messages: PmMessage[] }[] = []
-    let currentDate = ""
-
-    for (const msg of msgs) {
-      const d = formatChatDate(msg.created_at)
-      if (d !== currentDate) {
-        currentDate = d
-        groups.push({ date: d, messages: [] })
-      }
-      groups[groups.length - 1].messages.push(msg)
+  // Group pesan berdasarkan tanggal (gunakan updated_at sesuai API)
+  const grouped = (() => {
+    const groups: { date: string; msgs: PmMessage[] }[] = []
+    let cur = ""
+    for (const msg of messages) {
+      const d = formatChatDate(msg.updated_at || msg.created_at)
+      if (d !== cur) { cur = d; groups.push({ date: d, msgs: [] }) }
+      groups[groups.length - 1].msgs.push(msg)
     }
-
     return groups
   })()
 
   return (
     <div className="flex h-[calc(100vh-56px)] flex-col overflow-hidden">
-      {/* Chat Header */}
+
+      {/* ── Header ── */}
       <div className="flex items-center gap-3 border-b border-border bg-background/95 backdrop-blur px-4 py-3 shrink-0">
         <button
           onClick={onBack}
@@ -397,35 +507,35 @@ function ChatView({ idol, onBack }: { idol: OwnedPm; onBack: () => void }) {
           <IconArrowLeft className="h-5 w-5" />
         </button>
 
-        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary/10 border border-primary/20">
+        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary/10 border-2 border-primary/20">
           <span className="text-xs font-bold text-primary">{initials(idol.idol_name)}</span>
         </div>
 
         <div className="min-w-0 flex-1">
           <p className="truncate text-sm font-semibold">{idol.idol_name}</p>
           <p className="text-[11px] text-muted-foreground">
-            Akses hingga {formatDateShort(idol.expires_at)} · {idol.days_remaining}h lagi
+            Aktif hingga {formatDateShort(idol.expires_at)} · {idol.days_remaining}h lagi
           </p>
         </div>
 
-        {/* Page navigator — di kanan header */}
+        {/* Pagination di header */}
         {totalPage > 1 && (
           <div className="flex items-center gap-1 shrink-0">
             <button
               disabled={page <= 1 || loading}
-              onClick={() => setPage((p) => Math.max(1, p - 1))}
-              className="rounded-md p-1 text-muted-foreground hover:bg-accent disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+              onClick={() => setPage(p => Math.max(1, p - 1))}
+              className="rounded-md p-1 text-muted-foreground hover:bg-accent disabled:opacity-40 disabled:cursor-not-allowed"
               aria-label="Halaman sebelumnya"
             >
               <IconChevronLeft className="h-4 w-4" />
             </button>
-            <span className="min-w-[48px] text-center text-xs font-medium tabular-nums text-muted-foreground">
+            <span className="min-w-[52px] text-center text-xs font-medium tabular-nums text-muted-foreground">
               {page}/{totalPage}
             </span>
             <button
               disabled={page >= totalPage || loading}
-              onClick={() => setPage((p) => Math.min(totalPage, p + 1))}
-              className="rounded-md p-1 text-muted-foreground hover:bg-accent disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+              onClick={() => setPage(p => Math.min(totalPage, p + 1))}
+              className="rounded-md p-1 text-muted-foreground hover:bg-accent disabled:opacity-40 disabled:cursor-not-allowed"
               aria-label="Halaman berikutnya"
             >
               <IconChevronRight className="h-4 w-4" />
@@ -434,8 +544,9 @@ function ChatView({ idol, onBack }: { idol: OwnedPm; onBack: () => void }) {
         )}
       </div>
 
-      {/* Chat Body */}
-      <div className="flex-1 overflow-y-auto px-4 py-4 space-y-1">
+      {/* ── Chat Body ── */}
+      <div className="flex-1 overflow-y-auto px-4 py-4">
+
         {loading && (
           <div className="flex h-full items-center justify-center">
             <IconSpinner className="h-7 w-7 animate-spin text-muted-foreground" />
@@ -457,23 +568,19 @@ function ChatView({ idol, onBack }: { idol: OwnedPm; onBack: () => void }) {
           </div>
         )}
 
-        {!loading && !error && groupedMessages.length === 0 && (
+        {!loading && !error && messages.length === 0 && (
           <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
             <IconEmpty className="h-10 w-10 text-muted-foreground/30" />
             <p className="text-sm text-muted-foreground">Belum ada pesan di halaman ini.</p>
           </div>
         )}
 
-        {!loading && !error && groupedMessages.map((group) => (
-          <div key={group.date}>
-            <DateSeparator label={group.date} />
-            <div className="space-y-2">
-              {group.messages.map((msg) => (
-                <MessageBubble
-                  key={msg.message_id}
-                  msg={msg}
-                  idolName={idol.idol_name}
-                />
+        {!loading && !error && grouped.map((g) => (
+          <div key={g.date}>
+            <DateSeparator label={g.date} />
+            <div className="space-y-2.5">
+              {g.msgs.map((msg) => (
+                <MessageBubble key={msg.id} msg={msg} idolName={idol.idol_name} />
               ))}
             </div>
           </div>
@@ -482,9 +589,10 @@ function ChatView({ idol, onBack }: { idol: OwnedPm; onBack: () => void }) {
         <div ref={bottomRef} />
       </div>
 
-      {/* Bottom info bar */}
-      <div className="shrink-0 border-t border-border bg-muted/30 px-4 py-2.5 text-center text-[11px] text-muted-foreground">
-        Ini adalah percakapan PM tersimpan. Chat bersifat read-only.
+      {/* ── Bottom bar ── */}
+      <div className="shrink-0 border-t border-border bg-muted/30 px-4 py-2 text-center text-[11px] text-muted-foreground">
+        Percakapan PM tersimpan · read-only
+        {totalCount > 0 && <span className="ml-2 tabular-nums">· {totalCount} pesan</span>}
       </div>
     </div>
   )
@@ -501,7 +609,6 @@ function OwnedPmCard({ pm, onClick }: { pm: OwnedPm; onClick: () => void }) {
       onClick={onClick}
       className="w-full flex items-center gap-4 rounded-xl border border-border bg-card px-4 py-4 text-left shadow-sm transition-all hover:shadow-md hover:border-primary/40 active:scale-[0.99]"
     >
-      {/* Avatar */}
       <div className="relative flex-shrink-0">
         <div className="flex h-12 w-12 items-center justify-center rounded-full bg-primary/10 border-2 border-primary/20">
           <span className="text-sm font-bold text-primary">{initials(pm.idol_name)}</span>
@@ -511,7 +618,6 @@ function OwnedPmCard({ pm, onClick }: { pm: OwnedPm; onClick: () => void }) {
         )}
       </div>
 
-      {/* Info */}
       <div className="min-w-0 flex-1">
         <p className="truncate text-sm font-semibold">{pm.idol_name}</p>
         <div className="mt-1 flex flex-wrap items-center gap-2">
@@ -527,7 +633,6 @@ function OwnedPmCard({ pm, onClick }: { pm: OwnedPm; onClick: () => void }) {
         <p className="mt-1 text-[11px] text-muted-foreground">{pm.days_remaining} hari tersisa</p>
       </div>
 
-      {/* CTA */}
       <div className="flex-shrink-0 flex items-center gap-1.5 rounded-lg border border-primary/30 bg-primary/5 px-3 py-1.5">
         <IconChat className="h-3.5 w-3.5 text-primary" />
         <span className="text-xs font-semibold text-primary">Baca PM</span>
@@ -535,8 +640,6 @@ function OwnedPmCard({ pm, onClick }: { pm: OwnedPm; onClick: () => void }) {
     </button>
   )
 }
-
-// ─── Skeleton ───────────────────────────────────────────────
 
 function OwnedPmSkeleton() {
   return (
@@ -555,22 +658,19 @@ function OwnedPmSkeleton() {
 // ─── Main Page ──────────────────────────────────────────────
 
 export default function PmChatPage() {
-  const [ownedList, setOwnedList]   = useState<OwnedPm[]>([])
-  const [loading, setLoading]       = useState(true)
-  const [error, setError]           = useState<string | null>(null)
-  const [isLoggedIn, setIsLoggedIn] = useState(false)
+  const [ownedList, setOwnedList]       = useState<OwnedPm[]>([])
+  const [loading, setLoading]           = useState(true)
+  const [error, setError]               = useState<string | null>(null)
+  const [isLoggedIn, setIsLoggedIn]     = useState(false)
   const [selectedIdol, setSelectedIdol] = useState<OwnedPm | null>(null)
 
-  useEffect(() => {
-    setIsLoggedIn(!!getAccessToken())
-  }, [])
+  useEffect(() => { setIsLoggedIn(!!getAccessToken()) }, [])
 
   const fetchOwned = useCallback(async () => {
     if (!getAccessToken()) { setLoading(false); return }
-    setLoading(true)
-    setError(null)
+    setLoading(true); setError(null)
     try {
-      const res = await fetchWithAuth(`${API_BASE}/pm/my?apikey=${API_KEY}`)
+      const res  = await fetchWithAuth(`${API_BASE}/pm/my?apikey=${API_KEY}`)
       const json = await res.json()
       if (json.status && Array.isArray(json.data)) {
         setOwnedList(json.data)
@@ -584,27 +684,20 @@ export default function PmChatPage() {
     }
   }, [])
 
-  useEffect(() => {
-    if (isLoggedIn) fetchOwned()
-  }, [isLoggedIn, fetchOwned])
+  useEffect(() => { if (isLoggedIn) fetchOwned() }, [isLoggedIn, fetchOwned])
 
-  // ── Chat view terbuka ──
   if (selectedIdol) {
     return <ChatView idol={selectedIdol} onBack={() => setSelectedIdol(null)} />
   }
 
-  // ── Daftar PM yang dimiliki ──
-  const activeList   = ownedList.filter((p) => p.is_active)
-  const expiredList  = ownedList.filter((p) => !p.is_active)
+  const activeList  = ownedList.filter(p => p.is_active)
+  const expiredList = ownedList.filter(p => !p.is_active)
 
   return (
     <div className="max-w-2xl mx-auto px-3 sm:px-4 py-6 sm:py-8 space-y-5 sm:space-y-6">
-
-      {/* Header */}
       <div className="space-y-1">
         <span className="inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
-          <IconChat className="h-3.5 w-3.5" />
-          PM Saya
+          <IconChat className="h-3.5 w-3.5" />PM Saya
         </span>
         <h1 className="text-xl sm:text-2xl font-semibold">Private Message</h1>
         <p className="text-sm text-muted-foreground">
@@ -612,7 +705,6 @@ export default function PmChatPage() {
         </p>
       </div>
 
-      {/* Not logged in */}
       {!isLoggedIn && (
         <div className="rounded-lg border border-yellow-200 bg-yellow-50 dark:border-yellow-800 dark:bg-yellow-900/20 px-4 py-3 text-sm text-yellow-700 dark:text-yellow-400 flex items-center gap-2.5">
           <IconAlert className="h-[17px] w-[17px] shrink-0" />
@@ -620,22 +712,18 @@ export default function PmChatPage() {
         </div>
       )}
 
-      {/* Error */}
       {error && (
         <div className="rounded-lg border border-red-200 bg-red-50 dark:border-red-800 dark:bg-red-900/20 px-4 py-3 text-sm text-red-700 dark:text-red-400 flex items-center gap-2.5">
-          <IconAlert className="h-[17px] w-[17px] shrink-0" />
-          {error}
+          <IconAlert className="h-[17px] w-[17px] shrink-0" />{error}
         </div>
       )}
 
-      {/* Loading */}
       {loading && (
         <div className="space-y-3">
           {Array.from({ length: 3 }).map((_, i) => <OwnedPmSkeleton key={i} />)}
         </div>
       )}
 
-      {/* Daftar PM aktif */}
       {!loading && isLoggedIn && (
         <>
           {activeList.length > 0 && (
@@ -644,37 +732,27 @@ export default function PmChatPage() {
                 Akses Aktif · {activeList.length} idol
               </h2>
               <div className="space-y-2.5">
-                {activeList.map((pm) => (
-                  <OwnedPmCard
-                    key={pm.idol_identifier}
-                    pm={pm}
-                    onClick={() => setSelectedIdol(pm)}
-                  />
+                {activeList.map(pm => (
+                  <OwnedPmCard key={pm.idol_identifier} pm={pm} onClick={() => setSelectedIdol(pm)} />
                 ))}
               </div>
             </section>
           )}
 
-          {/* Daftar PM kedaluwarsa */}
           {expiredList.length > 0 && (
             <section className="space-y-2.5">
               <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                 Sudah Berakhir
               </h2>
               <div className="space-y-2.5 opacity-60">
-                {expiredList.map((pm) => (
-                  <div
-                    key={pm.idol_identifier}
-                    className="flex items-center gap-4 rounded-xl border border-border bg-card px-4 py-4"
-                  >
+                {expiredList.map(pm => (
+                  <div key={pm.idol_identifier} className="flex items-center gap-4 rounded-xl border border-border bg-card px-4 py-4">
                     <div className="flex h-12 w-12 items-center justify-center rounded-full bg-muted border-2 border-border flex-shrink-0">
                       <span className="text-sm font-bold text-muted-foreground">{initials(pm.idol_name)}</span>
                     </div>
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-sm font-semibold text-muted-foreground">{pm.idol_name}</p>
-                      <p className="mt-1 text-[11px] text-muted-foreground">
-                        Berakhir {formatDateShort(pm.expires_at)}
-                      </p>
+                      <p className="mt-1 text-[11px] text-muted-foreground">Berakhir {formatDateShort(pm.expires_at)}</p>
                     </div>
                     <span className="text-xs text-muted-foreground">Kedaluwarsa</span>
                   </div>
@@ -683,8 +761,7 @@ export default function PmChatPage() {
             </section>
           )}
 
-          {/* Empty state */}
-          {ownedList.length === 0 && !loading && (
+          {ownedList.length === 0 && (
             <div className="py-20 flex flex-col items-center gap-4 text-center">
               <div className="flex h-16 w-16 items-center justify-center rounded-full bg-muted">
                 <IconEmpty className="h-8 w-8 text-muted-foreground/40" />

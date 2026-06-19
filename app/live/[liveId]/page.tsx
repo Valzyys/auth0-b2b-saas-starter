@@ -396,6 +396,20 @@ function useCountdown(targetTs: number | null) {
 }
 
 // ─── HLS Player ───────────────────────────────────────────────
+// FIX ORB BLOCK:
+// Native HLS (`video.src = src`) TIDAK BISA mengirim custom header seperti
+// `x-api-token`. Kalau token wajib (worker mewajibkan header ini), request
+// native <video> akan ditolak server (401/403 dengan body JSON, bukan media),
+// dan browser mem-block response itu sebagai opaque response
+// (net::ERR_BLOCKED_BY_ORB) karena content-type tidak sesuai ekspektasi <video>.
+//
+// Fix: kalau ada token, JANGAN pernah pakai jalur native HLS — selalu pakai
+// hls.js, supaya xhrSetup bisa inject header di setiap request (manifest,
+// variant playlist, maupun segment). Native HLS hanya dipakai sebagai fallback
+// kalau memang tidak ada token sama sekali, ATAU hls.js tidak didukung sama
+// sekali di browser tersebut — dan dalam kasus itu token disisipkan juga
+// sebagai query param (?token=) sebagai pengaman tambahan, jaga-jaga server
+// juga menerima token lewat query selain header.
 function HlsPlayer({
   src, className, token,
 }: {
@@ -408,15 +422,35 @@ function HlsPlayer({
   useEffect(() => {
     if (!src || !videoRef.current) return
     const video = videoRef.current
-
-    if (video.canPlayType("application/vnd.apple.mpegurl")) {
-      video.src = src
-      return
-    }
-
     let hls: import("hls.js").default | null = null
-    import("hls.js").then(({ default: Hls }) => {
-      if (!Hls.isSupported() || !videoRef.current) return
+    let cancelled = false
+
+    // Sisipkan token sebagai query param juga (pengaman untuk native HLS
+    // fallback). Tidak masalah kalau dobel dengan header saat dipakai hls.js.
+    const srcWithToken = (() => {
+      if (!token) return src
+      try {
+        const u = new URL(src)
+        if (!u.searchParams.has("token") && !u.searchParams.has("x-api-token")) {
+          u.searchParams.set("token", token)
+        }
+        return u.toString()
+      } catch {
+        return src
+      }
+    })()
+
+    const canNativeHLS = video.canPlayType("application/vnd.apple.mpegurl")
+
+    async function setupHlsJs() {
+      const { default: Hls } = await import("hls.js")
+      if (cancelled || !videoRef.current) return
+      if (!Hls.isSupported()) {
+        // hls.js tidak didukung sama sekali → fallback native (kalau bisa),
+        // token tetap disisipkan lewat query param di srcWithToken.
+        if (canNativeHLS) video.src = srcWithToken
+        return
+      }
       hls = new Hls({
         maxBufferLength:    30,
         maxMaxBufferLength: 60,
@@ -428,9 +462,23 @@ function HlsPlayer({
       })
       hls.loadSource(src)
       hls.attachMedia(videoRef.current)
-    })
+    }
 
-    return () => { hls?.destroy() }
+    if (token) {
+      // Ada token wajib → selalu lewat hls.js, jangan native HLS,
+      // supaya header x-api-token bisa disisipkan di setiap request.
+      setupHlsJs()
+    } else if (canNativeHLS) {
+      // Tidak ada token → native HLS aman dipakai (mis. Safari/iOS).
+      video.src = src
+    } else {
+      setupHlsJs()
+    }
+
+    return () => {
+      cancelled = true
+      hls?.destroy()
+    }
   }, [src, token])
 
   return <video ref={videoRef} className={className} controls autoPlay playsInline muted />

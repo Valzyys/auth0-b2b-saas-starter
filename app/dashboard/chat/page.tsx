@@ -319,7 +319,7 @@ function AttachmentBubble({ att }: { att: PmAttachment }) {
             src={att.file_path}
             alt="Gambar"
             referrerPolicy="no-referrer"
-            crossOrigin="anonymous"
+           // crossOrigin="anonymous"
             className="max-h-56 max-w-[240px] rounded-xl object-cover block"
             loading="lazy"
             onError={() => setImgError(true)}
@@ -777,7 +777,7 @@ export default function PmChatPage() {
                 </p>
               </div>
               <a
-                href="/pm"
+                href="/dashboard/pm"
                 className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground hover:bg-primary/90 transition-colors"
               >
                 <IconShop className="h-4 w-4" />

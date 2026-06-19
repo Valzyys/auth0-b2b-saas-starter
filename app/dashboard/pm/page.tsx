@@ -7,70 +7,73 @@ const API_BASE = "https://v5.jkt48connect.com/api/team48"
 const API_KEY  = "JKTCONNECT"
 const POLL_MS  = 4000
 
-// ─── Types (JSDoc, biar tetap plain JS/JSX) ────────────────
-/**
- * @typedef {Object} PmMember
- * @property {string} idol_id
- * @property {string} identifier
- * @property {string} name
- * @property {string} given_name
- * @property {string} family_name
- * @property {string|null} profile_image
- * @property {string} group
- * @property {number} rank
- * @property {number} previous_rank
- * @property {number} rank_change
- * @property {"up"|"down"|"same"} rank_status
- * @property {number} messages_per_week
- * @property {string} tier
- * @property {string} tier_label
- * @property {boolean} is_owned
- *
- * @typedef {Object} PmPlan
- * @property {string} plan_code
- * @property {string} label
- * @property {number} duration_days
- * @property {number} price
- *
- * @typedef {Object} ActivePmPayment
- * @property {string} ref_id
- * @property {string} idol_name
- * @property {string} plan_label
- * @property {number} amount
- * @property {string} qris_image_url
- * @property {string} expired_at
- *
- * @typedef {Object} PmOrder
- * @property {string} ref_id
- * @property {string} idol_identifier
- * @property {string} idol_name
- * @property {string} plan_code
- * @property {number} duration_days
- * @property {number} amount
- * @property {string} qris_image_url
- * @property {string} status
- * @property {string} expired_at
- * @property {string|null} paid_at
- * @property {string|null} cancelled_at
- * @property {string} created_at
- */
+// ─── Types ─────────────────────────────────────────────────
+
+interface PmMember {
+  idol_id:           string
+  identifier:        string
+  name:              string
+  given_name:        string
+  family_name:       string
+  profile_image:     string | null
+  group:             string
+  rank:              number
+  previous_rank:     number
+  rank_change:       number
+  rank_status:       "up" | "down" | "same"
+  messages_per_week: number
+  tier:              string
+  tier_label:        string
+  is_owned:          boolean
+}
+
+interface PmPlan {
+  plan_code:    string
+  label:        string
+  duration_days: number
+  price:        number
+}
+
+interface ActivePmPayment {
+  ref_id:          string
+  idol_name:       string
+  plan_label:      string
+  amount:          number
+  qris_image_url:  string | null
+  expired_at:      string
+}
+
+interface PmOrder {
+  ref_id:           string
+  idol_identifier:  string
+  idol_name:        string
+  plan_code:        string
+  duration_days:    number
+  amount:           number
+  qris_image_url:   string | null
+  status:           string
+  expired_at:       string
+  paid_at:          string | null
+  cancelled_at:     string | null
+  created_at:       string
+}
 
 // ─── Helpers ───────────────────────────────────────────────
 
-function formatRp(amount) {
+function formatRp(amount: number): string {
   return new Intl.NumberFormat("id-ID", {
     style: "currency", currency: "IDR", minimumFractionDigits: 0,
   }).format(amount)
 }
 
-function formatDateShort(dateStr) {
+function formatDateShort(dateStr: string | null): string {
   if (!dateStr) return "-"
   return new Date(dateStr).toLocaleDateString("id-ID", {
     day: "numeric", month: "long", year: "numeric", timeZone: "Asia/Jakarta",
   })
 }
 
-function formatDateTime(dateStr) {
+function formatDateTime(dateStr: string | null): string {
   if (!dateStr) return "-"
   return new Date(dateStr).toLocaleString("id-ID", {
     day: "numeric", month: "short", year: "numeric",
@@ -78,13 +81,13 @@ function formatDateTime(dateStr) {
   }) + " WIB"
 }
 
-function getAccessToken() {
+function getAccessToken(): string | null {
   if (typeof document === "undefined") return null
   const match = document.cookie.match(/(?:^|;\s*)t48_access_token=([^;]*)/)
   return match ? decodeURIComponent(match[1]) : null
 }
 
-async function fetchWithAuth(url, options = {}) {
+async function fetchWithAuth(url: string, options: RequestInit = {}): Promise<Response> {
   const token = getAccessToken()
   return fetch(url, {
     ...options,
@@ -96,7 +99,7 @@ async function fetchWithAuth(url, options = {}) {
   })
 }
 
-function statusColor(status) {
+function statusColor(status: string): string {
   switch (status) {
     case "paid":      return "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400"
     case "pending":   return "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400"
@@ -106,7 +109,7 @@ function statusColor(status) {
   }
 }
 
-function statusLabel(status) {
+function statusLabel(status: string): string {
   switch (status) {
     case "paid":      return "Lunas"
     case "pending":   return "Menunggu"
@@ -116,115 +119,143 @@ function statusLabel(status) {
   }
 }
 
-function initials(name) {
+function initials(name: string | null | undefined): string {
   return (name || "?").trim().charAt(0).toUpperCase()
 }
 
 // ─── Icons (all inline SVG, no emoji) ──────────────────────
 
-const Icon = {
-  Search: (p) => (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" {...p}>
+function IconSearch(props: React.SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" {...props}>
       <circle cx="11" cy="11" r="7" strokeLinecap="round" />
       <path d="M21 21l-4.3-4.3" strokeLinecap="round" />
     </svg>
-  ),
-  Chat: (p) => (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" {...p}>
+  )
+}
+function IconChat(props: React.SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" {...props}>
       <path strokeLinecap="round" strokeLinejoin="round" d="M21 11.5a8.38 8.38 0 01-.9 3.8 8.5 8.5 0 01-7.6 4.7 8.38 8.38 0 01-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 01-.9-3.8 8.5 8.5 0 014.7-7.6 8.38 8.38 0 013.8-.9h.5a8.48 8.48 0 018 8v.5z" />
     </svg>
-  ),
-  Crown: (p) => (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" {...p}>
+  )
+}
+function IconCrown(props: React.SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" {...props}>
       <path strokeLinecap="round" strokeLinejoin="round" d="M3 19h18M4 10l4 3 4-7 4 7 4-3-2 9H6l-2-9z" />
     </svg>
-  ),
-  ArrowUp: (p) => (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" {...p}>
+  )
+}
+function IconArrowUp(props: React.SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" {...props}>
       <path strokeLinecap="round" strokeLinejoin="round" d="M12 19V5M5 12l7-7 7 7" />
     </svg>
-  ),
-  ArrowDown: (p) => (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" {...p}>
+  )
+}
+function IconArrowDown(props: React.SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" {...props}>
       <path strokeLinecap="round" strokeLinejoin="round" d="M12 5v14M5 12l7 7 7-7" />
     </svg>
-  ),
-  Minus: (p) => (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" {...p}>
+  )
+}
+function IconMinus(props: React.SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" {...props}>
       <path strokeLinecap="round" d="M5 12h14" />
     </svg>
-  ),
-  Close: (p) => (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" {...p}>
+  )
+}
+function IconClose(props: React.SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" {...props}>
       <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
     </svg>
-  ),
-  Check: (p) => (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" {...p}>
+  )
+}
+function IconCheck(props: React.SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" {...props}>
       <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
     </svg>
-  ),
-  Clock: (p) => (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" {...p}>
+  )
+}
+function IconClock(props: React.SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" {...props}>
       <circle cx="12" cy="12" r="9" />
       <path strokeLinecap="round" strokeLinejoin="round" d="M12 7v5l3.2 1.9" />
     </svg>
-  ),
-  Copy: (p) => (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" {...p}>
+  )
+}
+function IconCopy(props: React.SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" {...props}>
       <rect x="9" y="9" width="11" height="11" rx="2" />
       <path strokeLinecap="round" strokeLinejoin="round" d="M5 15H4a1 1 0 01-1-1V4a1 1 0 011-1h10a1 1 0 011 1v1" />
     </svg>
-  ),
-  Spinner: (p) => (
-    <svg viewBox="0 0 24 24" fill="none" {...p}>
+  )
+}
+function IconSpinner(props: React.SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" {...props}>
       <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="2.5" strokeOpacity="0.2" />
       <path d="M21 12a9 9 0 00-9-9" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" />
     </svg>
-  ),
-  Empty: (p) => (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" {...p}>
+  )
+}
+function IconEmpty(props: React.SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" {...props}>
       <path strokeLinecap="round" strokeLinejoin="round" d="M3 7l9-4 9 4-9 4-9-4zm0 0v10l9 4 9-4V7M3 7l9 4 9-4" />
     </svg>
-  ),
-  History: (p) => (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" {...p}>
+  )
+}
+function IconHistory(props: React.SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" {...props}>
       <path strokeLinecap="round" strokeLinejoin="round" d="M3 12a9 9 0 109-9 9.75 9.75 0 00-6.74 2.74L3 8" />
       <path strokeLinecap="round" strokeLinejoin="round" d="M3 3v5h5M12 7v5l4 2" />
     </svg>
-  ),
-  Members: (p) => (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" {...p}>
+  )
+}
+function IconMembers(props: React.SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" {...props}>
       <path strokeLinecap="round" strokeLinejoin="round" d="M16 19v-1.5a3.5 3.5 0 00-3.5-3.5h-5A3.5 3.5 0 004 17.5V19M16 19h4v-1.5a3.5 3.5 0 00-2.7-3.4M14.5 4.6a3 3 0 010 5.8M9 11a3.5 3.5 0 100-7 3.5 3.5 0 000 7z" />
     </svg>
-  ),
-  Alert: (p) => (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" {...p}>
+  )
+}
+function IconAlert(props: React.SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" {...props}>
       <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v4m0 4h.01M10.3 3.9L2.5 17a1.5 1.5 0 001.3 2.3h16.4a1.5 1.5 0 001.3-2.3L13.7 3.9a1.5 1.5 0 00-2.6 0z" />
     </svg>
-  ),
+  )
 }
 
 // ─── Rank delta badge ───────────────────────────────────────
 
-function RankDelta({ status, change }) {
+function RankDelta({ status, change }: { status: PmMember["rank_status"]; change: number }) {
   if (status === "up") {
     return (
       <span className="inline-flex items-center gap-0.5 text-xs font-semibold text-green-600 dark:text-green-400">
-        <Icon.ArrowUp className="h-2.5 w-2.5" />{Math.abs(change)}
+        <IconArrowUp className="h-2.5 w-2.5" />{Math.abs(change)}
       </span>
     )
   }
   if (status === "down") {
     return (
       <span className="inline-flex items-center gap-0.5 text-xs font-semibold text-red-500 dark:text-red-400">
-        <Icon.ArrowDown className="h-2.5 w-2.5" />{Math.abs(change)}
+        <IconArrowDown className="h-2.5 w-2.5" />{Math.abs(change)}
       </span>
     )
   }
   return (
     <span className="inline-flex items-center gap-0.5 text-xs font-semibold text-muted-foreground">
-      <Icon.Minus className="h-2.5 w-2.5" />
+      <IconMinus className="h-2.5 w-2.5" />
     </span>
   )
 }
@@ -233,82 +264,120 @@ function RankDelta({ status, change }) {
 
 function MemberSkeleton() {
   return (
-    <div className="flex flex-col items-center rounded-xl border border-border bg-card p-4 animate-pulse">
-      <div className="h-16 w-16 rounded-full bg-muted mt-1.5 mb-2.5" />
-      <div className="h-2.5 w-3/4 rounded bg-muted mb-2" />
-      <div className="h-2.5 w-2/5 rounded bg-muted mb-2" />
-      <div className="h-2.5 w-11/12 rounded bg-muted" />
+    <div className="flex flex-col overflow-hidden rounded-xl border border-border bg-card animate-pulse">
+      <div className="h-40 bg-muted" />
+      <div className="space-y-2 p-3.5">
+        <div className="h-3 w-3/4 rounded bg-muted" />
+        <div className="h-2.5 w-2/5 rounded bg-muted" />
+        <div className="h-7 w-full rounded bg-muted mt-1" />
+      </div>
     </div>
   )
 }
 
 // ─── Member Card ─────────────────────────────────────────────
+// Foto profil full-card di bagian atas (object-cover, kotak/rectangular),
+// bukan avatar bundar — mengikuti pola ShowCard di halaman jadwal show.
 
-function MemberCard({ member, onSelect, busy }) {
+function MemberCard({
+  member,
+  onSelect,
+  busy,
+}: {
+  member: PmMember
+  onSelect: (member: PmMember) => void
+  busy:   boolean
+}) {
   const [imgError, setImgError] = useState(false)
+
   return (
     <button
       type="button"
       onClick={() => onSelect(member)}
       disabled={busy}
-      className="group relative flex w-full flex-col items-center rounded-xl border border-border bg-card p-4 pt-3.5 text-center shadow-sm transition-shadow hover:shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
+      className="group flex flex-col overflow-hidden rounded-xl border border-border bg-card text-left shadow-sm transition-shadow hover:shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
     >
-      <span className="absolute top-2.5 left-2.5 text-xs font-bold text-muted-foreground tabular-nums">
-        #{member.rank}
-      </span>
-
-      <span className="relative mt-1.5 mb-2.5">
+      {/* Foto — kotak penuh di atas card */}
+      <div className="relative h-40 w-full overflow-hidden bg-muted shrink-0">
         {!imgError && member.profile_image ? (
           <img
             src={member.profile_image}
             alt={member.name}
-            className="h-16 w-16 rounded-full border border-border bg-muted object-cover"
+            crossOrigin="anonymous"
+            referrerPolicy="no-referrer"
+            className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
             onError={() => setImgError(true)}
             loading="lazy"
           />
         ) : (
-          <span className="flex h-16 w-16 items-center justify-center rounded-full border border-border bg-muted text-lg font-semibold text-muted-foreground">
-            {initials(member.given_name || member.name)}
-          </span>
+          <div className="flex h-full items-center justify-center">
+            <span className="text-3xl font-semibold text-muted-foreground/40">
+              {initials(member.given_name || member.name)}
+            </span>
+          </div>
         )}
-        {member.is_owned && (
-          <span
-            className="absolute -bottom-0.5 -right-0.5 flex h-[19px] w-[19px] items-center justify-center rounded-full border-2 border-card bg-green-500"
-            title="Sudah memiliki akses"
-          >
-            <Icon.Check className="h-[11px] w-[11px] text-white" />
-          </span>
-        )}
-      </span>
 
-      <span className="text-sm font-semibold leading-tight text-foreground">
-        {member.given_name || member.name}
-      </span>
-      <span className="mt-0.5 mb-2.5 text-[11px] text-muted-foreground">{member.name}</span>
-
-      <span className="mb-2 flex items-center gap-2">
-        <span className="rounded-full border border-border bg-muted px-2.5 py-0.5 text-[10.5px] font-medium text-muted-foreground">
-          {member.tier_label.replace(/^[^\w]+\s*/u, "")}
+        <span className="absolute top-2.5 left-2.5 rounded-full bg-black/70 px-2 py-0.5 text-xs font-bold text-white tabular-nums">
+          #{member.rank}
         </span>
-        <RankDelta status={member.rank_status} change={member.rank_change} />
-      </span>
 
-      <span className="mb-3.5 flex items-center gap-1.5 text-[11px] text-muted-foreground">
-        <Icon.Chat className="h-3 w-3 shrink-0" />
-        {member.messages_per_week.toLocaleString("id-ID")} pesan/minggu
-      </span>
+        {member.is_owned && (
+          <span className="absolute top-2.5 right-2.5 flex items-center gap-1 rounded-full bg-green-500 px-2 py-0.5 text-xs font-semibold text-white">
+            <IconCheck className="h-3 w-3" />
+            Dimiliki
+          </span>
+        )}
+      </div>
 
-      <span className="mt-auto w-full border-t border-border pt-2.5 text-xs font-semibold text-primary">
-        {member.is_owned ? "Perpanjang akses" : "Pilih paket"}
-      </span>
+      {/* Konten */}
+      <div className="flex flex-1 flex-col gap-2 p-3.5">
+        <div>
+          <p className="text-sm font-semibold leading-tight text-foreground">
+            {member.given_name || member.name}
+          </p>
+          <p className="text-xs text-muted-foreground line-clamp-1">{member.name}</p>
+        </div>
+
+        <div className="flex items-center justify-between gap-2">
+          <span className="rounded-full border border-border bg-muted px-2.5 py-0.5 text-[10.5px] font-medium text-muted-foreground">
+            {member.tier_label.replace(/^[^\w]+\s*/u, "")}
+          </span>
+          <RankDelta status={member.rank_status} change={member.rank_change} />
+        </div>
+
+        <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+          <IconChat className="h-3 w-3 shrink-0" />
+          {member.messages_per_week.toLocaleString("id-ID")} pesan/minggu
+        </div>
+
+        <div className="mt-auto pt-2 border-t border-border text-center text-xs font-semibold text-primary">
+          {member.is_owned ? "Perpanjang akses" : "Pilih paket"}
+        </div>
+      </div>
     </button>
   )
 }
 
 // ─── Plan Selection Modal ────────────────────────────────────
 
-function PlanModal({ member, plans, onClose, onConfirm, ordering, orderError }) {
-  const [selectedPlan, setSelectedPlan] = useState(plans[1]?.plan_code ?? plans[0]?.plan_code ?? null)
+function PlanModal({
+  member,
+  plans,
+  onClose,
+  onConfirm,
+  ordering,
+  orderError,
+}: {
+  member:     PmMember
+  plans:      PmPlan[]
+  onClose:    () => void
+  onConfirm:  (member: PmMember, planCode: string) => void
+  ordering:   boolean
+  orderError: string | null
+}) {
+  const [selectedPlan, setSelectedPlan] = useState<string | null>(
+    plans[1]?.plan_code ?? plans[0]?.plan_code ?? null
+  )
 
   return (
     <div
@@ -318,9 +387,15 @@ function PlanModal({ member, plans, onClose, onConfirm, ordering, orderError }) 
       <div className="w-full max-w-sm max-h-[90vh] overflow-y-auto rounded-xl border border-border bg-background shadow-xl">
         <div className="flex items-start justify-between gap-3 border-b border-border px-5 py-4">
           <div className="flex items-center gap-2.5">
-            <span className="flex h-[38px] w-[38px] shrink-0 items-center justify-center overflow-hidden rounded-full border border-border bg-muted">
+            <span className="h-11 w-11 shrink-0 overflow-hidden rounded-lg border border-border bg-muted flex items-center justify-center">
               {member.profile_image
-                ? <img src={member.profile_image} alt={member.name} className="h-full w-full object-cover" />
+                ? <img
+                    src={member.profile_image}
+                    alt={member.name}
+                    crossOrigin="anonymous"
+                    referrerPolicy="no-referrer"
+                    className="h-full w-full object-cover"
+                  />
                 : <span className="text-sm font-semibold text-muted-foreground">{initials(member.name)}</span>}
             </span>
             <span>
@@ -337,7 +412,7 @@ function PlanModal({ member, plans, onClose, onConfirm, ordering, orderError }) 
             aria-label="Tutup"
             className="shrink-0 rounded-md p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
           >
-            <Icon.Close className="h-[18px] w-[18px]" />
+            <IconClose className="h-[18px] w-[18px]" />
           </button>
         </div>
 
@@ -384,20 +459,20 @@ function PlanModal({ member, plans, onClose, onConfirm, ordering, orderError }) 
 
           {orderError && (
             <div className="mb-3 flex items-start gap-2 rounded-md border border-red-200 bg-red-50 px-3 py-2.5 text-xs text-red-700 dark:border-red-800 dark:bg-red-900/20 dark:text-red-400">
-              <Icon.Alert className="mt-0.5 h-[15px] w-[15px] shrink-0" />
+              <IconAlert className="mt-0.5 h-[15px] w-[15px] shrink-0" />
               <span>{orderError}</span>
             </div>
           )}
 
           <button
             type="button"
-            onClick={() => onConfirm(member, selectedPlan)}
+            onClick={() => selectedPlan && onConfirm(member, selectedPlan)}
             disabled={ordering || !selectedPlan}
             className="w-full rounded-md bg-primary py-3 text-sm font-semibold text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-60 disabled:cursor-not-allowed"
           >
             {ordering
               ? <span className="flex items-center justify-center gap-2">
-                  <Icon.Spinner className="h-4 w-4 animate-spin" />
+                  <IconSpinner className="h-4 w-4 animate-spin" />
                   Membuat order…
                 </span>
               : `Bayar ${formatRp(plans.find(p => p.plan_code === selectedPlan)?.price ?? 0)}`}
@@ -413,18 +488,26 @@ function PlanModal({ member, plans, onClose, onConfirm, ordering, orderError }) 
 
 // ─── QRIS Payment Modal ────────────────────────────────────
 
-function QrisModal({ payment, onClose, onSuccess }) {
-  const [pollStatus, setPollStatus] = useState("pending")
+function QrisModal({
+  payment,
+  onClose,
+  onSuccess,
+}: {
+  payment:   ActivePmPayment
+  onClose:   () => void
+  onSuccess: () => void
+}) {
+  const [pollStatus, setPollStatus] = useState<"pending" | "paid" | "expired" | "cancelled">("pending")
   const [cancelling, setCancelling] = useState(false)
   const [copied, setCopied] = useState(false)
-  const [secsLeft, setSecsLeft] = useState(() => {
+  const [secsLeft, setSecsLeft] = useState<number>(() => {
     if (payment.expired_at) {
       const diff = Math.floor((new Date(payment.expired_at).getTime() - Date.now()) / 1000)
       return Math.max(0, diff)
     }
     return 15 * 60
   })
-  const pollRef = useRef(null)
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   const mins = Math.floor(Math.max(0, secsLeft) / 60)
   const secs = Math.max(0, secsLeft) % 60
@@ -502,7 +585,7 @@ function QrisModal({ payment, onClose, onSuccess }) {
           </div>
           {pollStatus !== "pending" && (
             <button onClick={onClose} className="ml-3 text-muted-foreground hover:text-foreground" aria-label="Tutup">
-              <Icon.Close className="h-5 w-5" />
+              <IconClose className="h-5 w-5" />
             </button>
           )}
         </div>
@@ -512,7 +595,7 @@ function QrisModal({ payment, onClose, onSuccess }) {
           {pollStatus === "paid" && (
             <div className="flex flex-col items-center gap-3 py-4">
               <div className="flex h-16 w-16 items-center justify-center rounded-full bg-green-100 dark:bg-green-900/30">
-                <Icon.Check className="h-8 w-8 text-green-600 dark:text-green-400" />
+                <IconCheck className="h-8 w-8 text-green-600 dark:text-green-400" />
               </div>
               <div className="text-center">
                 <p className="font-semibold">Akses PM aktif</p>
@@ -527,7 +610,7 @@ function QrisModal({ payment, onClose, onSuccess }) {
           {pollStatus === "expired" && (
             <div className="flex flex-col items-center gap-3 py-4">
               <div className="flex h-16 w-16 items-center justify-center rounded-full bg-gray-100 dark:bg-gray-800">
-                <Icon.Clock className="h-8 w-8 text-gray-500" />
+                <IconClock className="h-8 w-8 text-gray-500" />
               </div>
               <div className="text-center">
                 <p className="font-semibold">Waktu habis</p>
@@ -542,7 +625,7 @@ function QrisModal({ payment, onClose, onSuccess }) {
           {pollStatus === "cancelled" && (
             <div className="flex flex-col items-center gap-3 py-4">
               <div className="flex h-16 w-16 items-center justify-center rounded-full bg-red-100 dark:bg-red-900/30">
-                <Icon.Close className="h-8 w-8 text-red-500" />
+                <IconClose className="h-8 w-8 text-red-500" />
               </div>
               <div className="text-center">
                 <p className="font-semibold">Order dibatalkan</p>
@@ -566,7 +649,7 @@ function QrisModal({ payment, onClose, onSuccess }) {
                   ? "bg-red-50 text-red-600 dark:bg-red-900/20 dark:text-red-400"
                   : "bg-yellow-50 text-yellow-700 dark:bg-yellow-900/20 dark:text-yellow-400"
               }`}>
-                <Icon.Clock className="h-4 w-4 shrink-0" />
+                <IconClock className="h-4 w-4 shrink-0" />
                 Berakhir dalam {mins}m {String(secs).padStart(2, "0")}s
               </div>
 
@@ -575,11 +658,13 @@ function QrisModal({ payment, onClose, onSuccess }) {
                   <img
                     src={payment.qris_image_url}
                     alt="QR Pembayaran"
+                    crossOrigin="anonymous"
+                    referrerPolicy="no-referrer"
                     className="h-52 w-52 rounded-lg border border-border object-contain bg-white"
                   />
                 ) : (
                   <div className="flex h-52 w-52 items-center justify-center rounded-lg border border-border bg-muted">
-                    <Icon.Spinner className="h-8 w-8 animate-spin text-muted-foreground" />
+                    <IconSpinner className="h-8 w-8 animate-spin text-muted-foreground" />
                   </div>
                 )}
                 <p className="text-center text-xs text-muted-foreground">
@@ -591,7 +676,7 @@ function QrisModal({ payment, onClose, onSuccess }) {
                 onClick={handleCopy}
                 className="flex w-full items-center justify-center gap-2 rounded-md border border-input bg-background py-2 text-xs font-medium text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
               >
-                <Icon.Copy className="h-3.5 w-3.5" />
+                <IconCopy className="h-3.5 w-3.5" />
                 {copied ? "Ref ID tersalin" : "Salin Ref ID"}
               </button>
 
@@ -622,7 +707,19 @@ function QrisModal({ payment, onClose, onSuccess }) {
 
 // ─── Order History Row ──────────────────────────────────────
 
-function OrderRow({ order, onResume, onCancel, resuming, cancelling }) {
+function OrderRow({
+  order,
+  onResume,
+  onCancel,
+  resuming,
+  cancelling,
+}: {
+  order:      PmOrder
+  onResume:   (order: PmOrder) => void
+  onCancel:   (order: PmOrder) => void
+  resuming:   boolean
+  cancelling: boolean
+}) {
   return (
     <div className="rounded-xl border border-border bg-background p-4">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
@@ -679,25 +776,25 @@ function OrderRow({ order, onResume, onCancel, resuming, cancelling }) {
 // ─── Main Page ─────────────────────────────────────────────
 
 export default function PmPurchasePage() {
-  const [members, setMembers]       = useState([])
-  const [plans, setPlans]           = useState([])
+  const [members, setMembers]       = useState<PmMember[]>([])
+  const [plans, setPlans]           = useState<PmPlan[]>([])
   const [loading, setLoading]       = useState(true)
-  const [error, setError]           = useState(null)
+  const [error, setError]           = useState<string | null>(null)
   const [search, setSearch]         = useState("")
   const [tierFilter, setTierFilter] = useState("all")
   const [isLoggedIn, setIsLoggedIn] = useState(false)
-  const [tab, setTab]               = useState("members")
+  const [tab, setTab]               = useState<"members" | "history">("members")
 
-  const [selectedMember, setSelectedMember] = useState(null)
+  const [selectedMember, setSelectedMember] = useState<PmMember | null>(null)
   const [ordering, setOrdering]     = useState(false)
-  const [orderError, setOrderError] = useState(null)
-  const [activePayment, setActivePayment] = useState(null)
+  const [orderError, setOrderError] = useState<string | null>(null)
+  const [activePayment, setActivePayment] = useState<ActivePmPayment | null>(null)
 
-  const [history, setHistory]       = useState([])
+  const [history, setHistory]       = useState<PmOrder[]>([])
   const [loadingHistory, setLoadingHistory] = useState(false)
-  const [resumingRef, setResumingRef] = useState(null)
-  const [cancellingRef, setCancellingRef] = useState(null)
-  const [historyError, setHistoryError] = useState(null)
+  const [resumingRef, setResumingRef] = useState<string | null>(null)
+  const [cancellingRef, setCancellingRef] = useState<string | null>(null)
+  const [historyError, setHistoryError] = useState<string | null>(null)
 
   useEffect(() => {
     setIsLoggedIn(!!getAccessToken())
@@ -766,7 +863,7 @@ export default function PmPurchasePage() {
     return list
   }, [members, tierFilter, search])
 
-  const tierTabs = [
+  const tierTabs: { key: string; label: string }[] = [
     { key: "all",          label: "Semua" },
     { key: "super_aktif",  label: "Super Aktif" },
     { key: "aktif",        label: "Aktif" },
@@ -775,13 +872,13 @@ export default function PmPurchasePage() {
     { key: "tidak_aktif",  label: "Tidak Aktif" },
   ]
 
-  const openPlanModal = (member) => {
+  const openPlanModal = (member: PmMember) => {
     if (!isLoggedIn) return
     setOrderError(null)
     setSelectedMember(member)
   }
 
-  const handleConfirmOrder = async (member, planCode) => {
+  const handleConfirmOrder = async (member: PmMember, planCode: string) => {
     setOrdering(true)
     setOrderError(null)
     try {
@@ -813,7 +910,7 @@ export default function PmPurchasePage() {
     }
   }
 
-  const handleResumeFromHistory = useCallback(async (order) => {
+  const handleResumeFromHistory = useCallback(async (order: PmOrder) => {
     setResumingRef(order.ref_id)
     setHistoryError(null)
     try {
@@ -845,7 +942,7 @@ export default function PmPurchasePage() {
     }
   }, [fetchHistory, plans])
 
-  const handleCancelOrder = useCallback(async (order) => {
+  const handleCancelOrder = useCallback(async (order: PmOrder) => {
     setCancellingRef(order.ref_id)
     setHistoryError(null)
     try {
@@ -877,7 +974,7 @@ export default function PmPurchasePage() {
       {/* Header */}
       <div className="space-y-1">
         <span className="inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
-          <Icon.Crown className="h-3.5 w-3.5" />
+          <IconCrown className="h-3.5 w-3.5" />
           Private Message
         </span>
         <h1 className="text-2xl font-semibold">Beli akses PM member JKT48</h1>
@@ -889,7 +986,7 @@ export default function PmPurchasePage() {
       {/* Login notice */}
       {!isLoggedIn && (
         <div className="rounded-lg border border-yellow-200 bg-yellow-50 dark:border-yellow-800 dark:bg-yellow-900/20 px-4 py-3 text-sm text-yellow-700 dark:text-yellow-400 flex items-center gap-2.5">
-          <Icon.Alert className="h-[17px] w-[17px] shrink-0" />
+          <IconAlert className="h-[17px] w-[17px] shrink-0" />
           Login terlebih dahulu untuk membeli akses PM.
         </div>
       )}
@@ -904,7 +1001,7 @@ export default function PmPurchasePage() {
               : "border-transparent text-muted-foreground hover:text-foreground"
           }`}
         >
-          <Icon.Members className="h-4 w-4" />
+          <IconMembers className="h-4 w-4" />
           Member
         </button>
         <button
@@ -915,7 +1012,7 @@ export default function PmPurchasePage() {
               : "border-transparent text-muted-foreground hover:text-foreground"
           }`}
         >
-          <Icon.History className="h-4 w-4" />
+          <IconHistory className="h-4 w-4" />
           Riwayat
           {pendingCount > 0 && (
             <span className="rounded-full bg-yellow-500 px-1.5 py-0.5 text-xs font-semibold leading-none text-white">
@@ -930,7 +1027,7 @@ export default function PmPurchasePage() {
         <>
           <div className="space-y-3.5 -mt-2">
             <label className="flex max-w-xs items-center gap-2 rounded-lg border border-border bg-background px-3 py-2">
-              <Icon.Search className="h-4 w-4 shrink-0 text-muted-foreground" />
+              <IconSearch className="h-4 w-4 shrink-0 text-muted-foreground" />
               <input
                 type="text"
                 value={search}
@@ -964,16 +1061,16 @@ export default function PmPurchasePage() {
           )}
 
           {loading ? (
-            <div className="grid gap-3 grid-cols-[repeat(auto-fill,minmax(160px,1fr))]">
+            <div className="grid gap-4 grid-cols-2 sm:grid-cols-3 lg:grid-cols-4">
               {Array.from({ length: 8 }).map((_, i) => <MemberSkeleton key={i} />)}
             </div>
           ) : filteredMembers.length === 0 ? (
             <div className="py-20 text-center text-muted-foreground text-sm space-y-2">
-              <Icon.Empty className="mx-auto h-8 w-8 text-muted-foreground/40" />
+              <IconEmpty className="mx-auto h-8 w-8 text-muted-foreground/40" />
               <p>Tidak ada member yang cocok dengan pencarian.</p>
             </div>
           ) : (
-            <div className="grid gap-3 grid-cols-[repeat(auto-fill,minmax(160px,1fr))]">
+            <div className="grid gap-4 grid-cols-2 sm:grid-cols-3 lg:grid-cols-4">
               {filteredMembers.map((member) => (
                 <MemberCard
                   key={member.idol_id}
@@ -1010,7 +1107,7 @@ export default function PmPurchasePage() {
                 </div>
               ) : history.length === 0 ? (
                 <div className="py-16 text-center space-y-2">
-                  <Icon.History className="mx-auto h-10 w-10 text-muted-foreground/30" />
+                  <IconHistory className="mx-auto h-10 w-10 text-muted-foreground/30" />
                   <p className="text-muted-foreground text-sm">Belum ada riwayat pembelian PM.</p>
                   <button
                     onClick={() => setTab("members")}

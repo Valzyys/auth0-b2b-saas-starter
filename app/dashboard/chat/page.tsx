@@ -54,19 +54,23 @@ interface PmMessage {
 // Struktur response GET /pm/messages/:idol_name
 // json.data.messages — bukan json.data langsung
 interface PmApiResponse {
-  status:          boolean
-  idol_name:       string
-  identifier:      string
+  status: boolean
+  message?: string
+
+  idol_name: string
+  identifier: string
   conversation_id: string
-  page:            number
-  fetched_at:      string
+  page: number
+  fetched_at: string
+
   data: {
-    success:    boolean
-    page:       number
-    pageSize:   number
-    count:      number
-    has_more:   boolean
-    messages:   PmMessage[]
+    success: boolean
+    conversation_id: string
+    page: number
+    pageSize: number
+    count: number
+    has_more: boolean
+    messages: PmMessage[]
   }
 }
 

@@ -658,7 +658,6 @@ function QrisModal({
                   <img
                     src={payment.qris_image_url}
                     alt="QR Pembayaran"
-                    crossOrigin="anonymous"
                     referrerPolicy="no-referrer"
                     className="h-52 w-52 rounded-lg border border-border object-contain bg-white"
                   />

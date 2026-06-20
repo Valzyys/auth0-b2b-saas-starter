@@ -324,22 +324,15 @@ function isShowIdFormat(value: string): boolean {
 
 // ─── IDN2 (v1) stream loader ──────────────────────────────────
 async function getIdn2StreamData(showId: string, slug: string): Promise<Idn2StreamData> {
-  // Tentukan identifier mana yang dipakai konsisten untuk token DAN request.
-  // Kalau showId formatnya cocok pola "SH..." pakai showId, kalau tidak fallback ke slug.
-  const useShowId   = isShowIdFormat(showId)
-  const identifier  = useShowId ? showId : slug
-  const headerKey   = useShowId ? "x-showId" : "x-slug"
-  const queryKey    = useShowId ? "showId" : "slug"
+  // Server v1 ini selalu wajib query param "slug", terlepas dari
+  // identifier apa yang ada di dalam token. Header tetap pakai showId
+  // karena token kita generate dari showId.
+  const token = await generateGiStreamToken(showId, false)  // isSlug: false
 
-  // Token HARUS digenerate dengan identifier yang sama persis
-  // dengan yang dikirim di header/query, kalau tidak server
-  // akan balas SHOWID_MISMATCH.
-  const token = await generateGiStreamToken(identifier, !useShowId)
-
-  const res = await fetch(`${V1_STREAM_BASE}/stream?${queryKey}=${identifier}`, {
+  const res = await fetch(`${V1_STREAM_BASE}/stream?slug=${slug}`, {
     headers: {
       "x-api-token": token,
-      [headerKey]:   identifier,
+      "x-showId":    showId,
     },
   })
 

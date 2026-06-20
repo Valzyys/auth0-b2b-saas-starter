@@ -1803,7 +1803,7 @@ const loadIdn2Stream = useCallback(async () => {
                 {activeServer === "idn2" && idn2StreamData && (
                   <p className="text-[10px] text-white/25 flex items-center gap-1">
                     <span className="inline-flex h-1.5 w-1.5 rounded-full bg-blue-500" />
-                    v1 · {idn2StreamData.qualities.length} kualitas tersedia
+                    GiStream-V2 · {idn2StreamData.qualities.length} kualitas tersedia
                   </p>
                 )}
                 {activeServer === "idn2" && idn2Error && (

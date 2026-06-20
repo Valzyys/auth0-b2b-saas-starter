@@ -24,6 +24,9 @@ const TOKEN_API_BASE = "https://v5.jkt48connect.com"
 const CTV_BASE       = "https://ctv.jkt48connect.com"
 const SIGNING_PATH   = "/api/token/generate?apikey=JKTCONNECT"
 
+// ─── Theater lineup constants ──────────────────────────────────
+const THEATER_API_BASE = "https://v5.jkt48connect.com/api/jkt48/theater"
+
 // ─── Slug thumbnail overrides ─────────────────────────────────
 const SLUG_THUMBNAIL_OVERRIDES: { pattern: string; image: string }[] = [
   {
@@ -146,6 +149,66 @@ interface ChatUser {
   role:       string
 }
 
+// ─── Theater lineup types ──────────────────────────────────────
+interface TheaterLineupMember {
+  id:      string
+  name:    string
+  url_key: string
+}
+
+interface TheaterMember {
+  name:      string
+  type:      string
+  member_id: number
+  img:       string
+  img_alt:   string
+}
+
+interface TheaterPricing {
+  label:       string
+  price:       number
+  quota:       number
+  is_ofc_only: boolean
+}
+
+interface TheaterSalesPeriod {
+  label:        string
+  start_date:   string
+  end_date:     string
+  sales_method: string
+  pricing:      TheaterPricing[]
+}
+
+interface TheaterShowData {
+  success:               boolean
+  author:                string | null
+  detail_type:           string | null
+  reference_code:        string | null
+  banner:                string | null
+  poster:                string | null
+  title:                 string
+  date:                  string | null
+  start_time:            string | null
+  end_time:              string | null
+  status:                boolean
+  content_body:          string | null
+  short_description:     string | null
+  jkt48_member_type:     string | null
+  default_price:         number | null
+  total_quota:            number | null
+  max_purchase:          number | null
+  theater_show_id:       number | null
+  set_list:              string | null
+  seating_layout:        string | null
+  reception_start_time:  string | null
+  reception_end_time:    string | null
+  is_birthday_show:      boolean
+  birthday_members:      string[]
+  lineup:                TheaterLineupMember[]
+  jkt48_member:          TheaterMember[]
+  sales_period:          TheaterSalesPeriod[]
+}
+
 type VerifyState =
   | "checking"
   | "waiting_live"
@@ -231,6 +294,14 @@ async function getIdnStreamData(slug: string): Promise<IdnStreamData> {
   }))
 
   return { url: autoUrl, token, qualities }
+}
+
+// ─── Theater lineup helper ──────────────────────────────────────
+async function getTheaterShowData(showId: string): Promise<TheaterShowData> {
+  const res  = await fetch(`${THEATER_API_BASE}/${showId}?apikey=${API_KEY}`)
+  const data = await res.json()
+  if (!data.success) throw new Error(data.message || "Gagal memuat lineup theater")
+  return data as TheaterShowData
 }
 
 // ─── General helpers ──────────────────────────────────────────
@@ -1063,6 +1134,102 @@ function LiveChatPanel({
   )
 }
 
+// ─── Theater Lineup Section ───────────────────────────────────
+function TheaterLineupSection({
+  data, loading, error, onRetry,
+}: {
+  data:    TheaterShowData | null
+  loading: boolean
+  error:   string
+  onRetry: () => void
+}) {
+  if (loading) {
+    return (
+      <div className="px-4 py-4 border-b border-white/10">
+        <div className="flex items-center gap-2 text-xs text-white/30">
+          <div className="h-3.5 w-3.5 border-2 border-white/20 border-t-white/60 rounded-full animate-spin" />
+          Memuat lineup theater...
+        </div>
+      </div>
+    )
+  }
+
+  if (error) {
+    return (
+      <div className="px-4 py-3 border-b border-white/10">
+        <div className="flex items-center justify-between gap-3 rounded-lg bg-yellow-500/10 border border-yellow-500/20 px-3 py-2 text-xs text-yellow-400">
+          <span>{error}</span>
+          <button onClick={onRetry} className="shrink-0 underline hover:text-yellow-300 transition-colors">Coba lagi</button>
+        </div>
+      </div>
+    )
+  }
+
+  if (!data || !data.lineup?.length) return null
+
+  const membersById = new Map(data.jkt48_member.map(m => [String(m.member_id), m]))
+  const lineup = data.lineup.map(item => {
+    const member = membersById.get(item.id)
+    return {
+      id:      item.id,
+      name:    item.name,
+      url_key: item.url_key,
+      img:     member?.img || member?.img_alt || null,
+      type:    member?.type || data.jkt48_member_type || "",
+    }
+  })
+
+  const formattedDate = (() => {
+    if (!data.date) return null
+    try {
+      return new Date(data.date).toLocaleDateString("id-ID", {
+        weekday: "long", day: "numeric", month: "long", year: "numeric", timeZone: "Asia/Jakarta",
+      })
+    } catch { return null }
+  })()
+
+  return (
+    <div className="px-4 py-4 border-b border-white/10 space-y-3">
+      <div className="flex items-start justify-between gap-3">
+        <div className="space-y-0.5 min-w-0">
+          <p className="text-xs font-semibold uppercase tracking-widest text-white/40">Lineup Theater</p>
+          <h2 className="text-sm font-bold text-white truncate">{data.title}</h2>
+          {(formattedDate || data.start_time) && (
+            <p className="text-xs text-white/30">
+              {formattedDate}
+              {data.start_time && ` · ${data.start_time}`}
+              {data.end_time && ` - ${data.end_time}`}
+              {data.start_time ? " WIB" : ""}
+            </p>
+          )}
+        </div>
+        {data.jkt48_member_type && (
+          <span className="shrink-0 rounded-full bg-white/10 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-white/50">
+            {data.jkt48_member_type}
+          </span>
+        )}
+      </div>
+      <div className="flex gap-3 overflow-x-auto pb-1 -mx-1 px-1">
+        {lineup.map(m => (
+          <div key={m.id} className="flex flex-col items-center gap-1.5 shrink-0 w-16">
+            <div className="h-14 w-14 rounded-full overflow-hidden bg-white/10 ring-1 ring-white/10">
+              {m.img ? (
+                <img src={m.img} alt={m.name} className="h-full w-full object-cover"
+                  onError={e => { (e.target as HTMLImageElement).style.display = "none" }} />
+              ) : (
+                <div className="h-full w-full flex items-center justify-center text-xs font-bold text-white/40">
+                  {getInitials(m.name)}
+                </div>
+              )}
+            </div>
+            <p className="text-[10px] text-white/60 text-center leading-tight line-clamp-2">{m.name}</p>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 // ─── Player View ──────────────────────────────────────────────
 function PlayerView({
   show, streamData, activeSource, setActiveSource, liveId,
@@ -1096,6 +1263,30 @@ function PlayerView({
   // ── Chat user ────────────────────────────────────────────────
   const [chatUser,        setChatUser]        = useState<ChatUser | null>(null)
   const [chatUserLoading, setChatUserLoading] = useState(true)
+
+  // ── Realtime viewer count ──────────────────────────────────────
+  const viewerCount = useViewerCount(show.showId, user?.user_id ?? null)
+
+  // ── Theater lineup ──────────────────────────────────────────────
+  const [theaterData,    setTheaterData]    = useState<TheaterShowData | null>(null)
+  const [theaterLoading, setTheaterLoading] = useState(true)
+  const [theaterError,   setTheaterError]   = useState("")
+
+  const loadTheaterLineup = useCallback(async () => {
+    if (!show.showId) { setTheaterLoading(false); return }
+    setTheaterLoading(true)
+    setTheaterError("")
+    try {
+      const data = await getTheaterShowData(show.showId)
+      setTheaterData(data)
+    } catch (e: any) {
+      setTheaterError(e?.message || "Gagal memuat lineup theater")
+    } finally {
+      setTheaterLoading(false)
+    }
+  }, [show.showId])
+
+  useEffect(() => { loadTheaterLineup() }, [loadTheaterLineup])
 
   // ── Load IDN stream via GiStream ──────────────────────────────
   const loadIdnStream = useCallback(async () => {
@@ -1196,6 +1387,15 @@ function PlayerView({
           </div>
         </div>
         <div className="flex items-center gap-2 shrink-0">
+          {viewerCount > 0 && (
+            <span className="flex items-center gap-1 rounded-full bg-white/10 px-2.5 py-1 text-xs font-medium text-white/70">
+              <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+              </svg>
+              {viewerCount.toLocaleString("id-ID")}
+            </span>
+          )}
           {accessMode === "membership" || isMember ? (
             <span className="flex items-center gap-1 rounded-full bg-blue-500/20 px-2.5 py-1 text-xs font-medium text-blue-300">
               <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -1416,6 +1616,14 @@ function PlayerView({
               </div>
             )}
           </div>
+
+          {/* ── Theater lineup ── */}
+          <TheaterLineupSection
+            data={theaterData}
+            loading={theaterLoading}
+            error={theaterError}
+            onRetry={loadTheaterLineup}
+          />
 
           {/* ── Access info bar ── */}
           <div className="px-4 py-3 flex items-center justify-between">

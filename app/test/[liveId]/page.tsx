@@ -316,18 +316,30 @@ async function getIdnStreamData(slug: string): Promise<IdnStreamData> {
   return { url: autoUrl, token, qualities }
 }
 
-// ─── IDN2 (v1) stream loader ──────────────────────────────────
-// Endpoint: GET https://v1.jkt48connect.com/stream?showId=SHOWID
-// Headers:  x-api-token: TOKEN, x-showId: SHOWID
-// Response: pure M3U8 master playlist text
-async function getIdn2StreamData(showId: string, slug: string): Promise<Idn2StreamData> {
-  // Generate token via GiStream — pakai slug, bukan showId
-  const token = await generateGiStreamToken(slug, true)  // ← isSlug: true
+// ─── Helper: deteksi apakah string ini showId atau slug ───────
+function isShowIdFormat(value: string): boolean {
+  // showId biasanya pendek, formatnya "SH" diikuti angka, contoh: SH7623
+  return /^SH\d+$/i.test(value)
+}
 
-  const res = await fetch(`${V1_STREAM_BASE}/stream?showId=${showId}`, {
+// ─── IDN2 (v1) stream loader ──────────────────────────────────
+async function getIdn2StreamData(showId: string, slug: string): Promise<Idn2StreamData> {
+  // Tentukan identifier mana yang dipakai konsisten untuk token DAN request.
+  // Kalau showId formatnya cocok pola "SH..." pakai showId, kalau tidak fallback ke slug.
+  const useShowId   = isShowIdFormat(showId)
+  const identifier  = useShowId ? showId : slug
+  const headerKey   = useShowId ? "x-showId" : "x-slug"
+  const queryKey    = useShowId ? "showId" : "slug"
+
+  // Token HARUS digenerate dengan identifier yang sama persis
+  // dengan yang dikirim di header/query, kalau tidak server
+  // akan balas SHOWID_MISMATCH.
+  const token = await generateGiStreamToken(identifier, !useShowId)
+
+  const res = await fetch(`${V1_STREAM_BASE}/stream?${queryKey}=${identifier}`, {
     headers: {
       "x-api-token": token,
-      "x-showId":    showId,
+      [headerKey]:   identifier,
     },
   })
 
@@ -346,7 +358,6 @@ async function getIdn2StreamData(showId: string, slug: string): Promise<Idn2Stre
 
     const attrs: Record<string, string> = {}
     const attrStr = line.replace("#EXT-X-STREAM-INF:", "")
-    // Parse key=value pairs (handles quoted values)
     attrStr.replace(/([A-Z0-9_-]+)=("([^"]*?)"|([^,]*))/g, (_: string, key: string, _full: string, quoted: string, unquoted: string) => {
       attrs[key] = quoted !== undefined ? quoted : unquoted
       return ""
@@ -360,7 +371,6 @@ async function getIdn2StreamData(showId: string, slug: string): Promise<Idn2Stre
     const fps        = attrs["FRAME-RATE"] || ""
     const height     = resolution ? resolution.split("x")[1] : ""
 
-    // Derive quality name from resolution height
     const fpsNum = parseFloat(fps)
     const fpsSuffix = fpsNum >= 50 ? "60" : "30"
     const name = height
@@ -376,7 +386,6 @@ async function getIdn2StreamData(showId: string, slug: string): Promise<Idn2Stre
     qualities.push({ index: idx++, name, bandwidth, bandwidth_label, resolution, fps, url })
   }
 
-  // Sort by bandwidth descending (highest quality first)
   qualities.sort((a, b) => b.bandwidth - a.bandwidth)
   qualities.forEach((q, i) => { q.index = i })
 

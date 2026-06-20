@@ -320,9 +320,9 @@ async function getIdnStreamData(slug: string): Promise<IdnStreamData> {
 // Endpoint: GET https://v1.jkt48connect.com/stream?showId=SHOWID
 // Headers:  x-api-token: TOKEN, x-showId: SHOWID
 // Response: pure M3U8 master playlist text
-async function getIdn2StreamData(showId: string): Promise<Idn2StreamData> {
-  // Generate token via GiStream (by showId)
-  const token = await generateGiStreamToken(showId, false)
+async function getIdn2StreamData(showId: string, slug: string): Promise<Idn2StreamData> {
+  // Generate token via GiStream — pakai slug, bukan showId
+  const token = await generateGiStreamToken(slug, true)  // ← isSlug: true
 
   const res = await fetch(`${V1_STREAM_BASE}/stream?showId=${showId}`, {
     headers: {
@@ -1448,20 +1448,21 @@ function PlayerView({
   }, [show.slug])
 
   // ── Load IDN2 stream via v1 (pure M3U8) ──────────────────────
-  const loadIdn2Stream = useCallback(async () => {
-    if (!show.showId) { setIdn2Error("Show ID tidak tersedia"); return }
-    setIdn2Loading(true)
-    setIdn2Error("")
-    try {
-      const data = await getIdn2StreamData(show.showId)
-      setIdn2StreamData(data)
-      setIdn2CurrentQuality(null)
-    } catch (e: any) {
-      setIdn2Error(e?.message || "Gagal memuat stream IDN 2")
-    } finally {
-      setIdn2Loading(false)
-    }
-  }, [show.showId])
+const loadIdn2Stream = useCallback(async () => {
+  if (!show.showId) { setIdn2Error("Show ID tidak tersedia"); return }
+  if (!show.slug)   { setIdn2Error("Slug show tidak tersedia"); return }  // ← tambah guard
+  setIdn2Loading(true)
+  setIdn2Error("")
+  try {
+    const data = await getIdn2StreamData(show.showId, show.slug)  // ← pass slug
+    setIdn2StreamData(data)
+    setIdn2CurrentQuality(null)
+  } catch (e: any) {
+    setIdn2Error(e?.message || "Gagal memuat stream IDN 2")
+  } finally {
+    setIdn2Loading(false)
+  }
+}, [show.showId, show.slug])  // ← tambah show.slug di deps
 
   // ── Switch server ─────────────────────────────────────────────
   const handleServerChange = useCallback(async (server: ServerType) => {

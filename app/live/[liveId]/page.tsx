@@ -24,6 +24,9 @@ const TOKEN_API_BASE = "https://v5.jkt48connect.com"
 const CTV_BASE       = "https://ctv.jkt48connect.com"
 const SIGNING_PATH   = "/api/token/generate?apikey=JKTCONNECT"
 
+// ─── v1 stream base (IDN2) ────────────────────────────────────
+const V1_STREAM_BASE = "https://v1.jkt48connect.com"
+
 // ─── Theater lineup constants ──────────────────────────────────
 const THEATER_API_BASE = "https://v5.jkt48connect.com/api/jkt48/theater"
 
@@ -110,7 +113,7 @@ interface CachedEmailAccess {
 }
 
 // ─── Server / source types ────────────────────────────────────
-type ServerType = "idn" | "rtmp" | "youtube"
+type ServerType = "idn" | "idn2" | "rtmp" | "youtube"
 
 interface IdnStreamData {
   url:       string
@@ -127,6 +130,23 @@ interface IdnQuality {
   resolution:      string
   fps:             string
   manual_url:      string
+}
+
+// ─── IDN2 (v1) stream data ────────────────────────────────────
+interface Idn2Quality {
+  index:           number
+  name:            string
+  bandwidth:       number
+  bandwidth_label: string
+  resolution:      string
+  fps:             string
+  url:             string
+}
+
+interface Idn2StreamData {
+  url:       string   // best/auto URL (first in list)
+  token:     string
+  qualities: Idn2Quality[]
 }
 
 // ─── Chat types ──────────────────────────────────────────────
@@ -292,6 +312,77 @@ async function getIdnStreamData(slug: string): Promise<IdnStreamData> {
     fps:         s["FRAME-RATE"] || "",
     manual_url:  s.url || "",
   }))
+
+  return { url: autoUrl, token, qualities }
+}
+
+// ─── Helper: deteksi apakah string ini showId atau slug ───────
+function isShowIdFormat(value: string): boolean {
+  // showId biasanya pendek, formatnya "SH" diikuti angka, contoh: SH7623
+  return /^SH\d+$/i.test(value)
+}
+
+// ─── IDN2 (v1) stream loader ──────────────────────────────────
+async function getIdn2StreamData(showId: string, slug: string): Promise<Idn2StreamData> {
+  // Server v1 ini selalu wajib query param "slug", terlepas dari
+  // identifier apa yang ada di dalam token. Header tetap pakai showId
+  // karena token kita generate dari showId.
+  const token = await generateGiStreamToken(showId, false)  // isSlug: false
+
+  const res = await fetch(`${V1_STREAM_BASE}/stream?slug=${slug}`, {
+    headers: {
+      "x-api-token": token,
+      "x-showId":    showId,
+    },
+  })
+
+  if (!res.ok) throw new Error(`v1 stream error: ${res.status}`)
+
+  const m3u8Text = await res.text()
+
+  // Parse M3U8 master playlist manually
+  const lines = m3u8Text.split("\n").map(l => l.trim()).filter(Boolean)
+  const qualities: Idn2Quality[] = []
+  let idx = 0
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]
+    if (!line.startsWith("#EXT-X-STREAM-INF:")) continue
+
+    const attrs: Record<string, string> = {}
+    const attrStr = line.replace("#EXT-X-STREAM-INF:", "")
+    attrStr.replace(/([A-Z0-9_-]+)=("([^"]*?)"|([^,]*))/g, (_: string, key: string, _full: string, quoted: string, unquoted: string) => {
+      attrs[key] = quoted !== undefined ? quoted : unquoted
+      return ""
+    })
+
+    const url = lines[i + 1] ?? ""
+    if (!url || url.startsWith("#")) continue
+
+    const bandwidth  = parseInt(attrs["BANDWIDTH"] || "0") || 0
+    const resolution = attrs["RESOLUTION"] || ""
+    const fps        = attrs["FRAME-RATE"] || ""
+    const height     = resolution ? resolution.split("x")[1] : ""
+
+    const fpsNum = parseFloat(fps)
+    const fpsSuffix = fpsNum >= 50 ? "60" : "30"
+    const name = height
+      ? `${height}p${fpsNum >= 50 ? fpsSuffix : ""}`
+      : `Q${idx}`
+
+    const bandwidth_label = bandwidth >= 1_000_000
+      ? (bandwidth / 1_000_000).toFixed(1) + " Mbps"
+      : bandwidth > 0
+      ? Math.round(bandwidth / 1_000) + " Kbps"
+      : ""
+
+    qualities.push({ index: idx++, name, bandwidth, bandwidth_label, resolution, fps, url })
+  }
+
+  qualities.sort((a, b) => b.bandwidth - a.bandwidth)
+  qualities.forEach((q, i) => { q.index = i })
+
+  const autoUrl = qualities[0]?.url || ""
 
   return { url: autoUrl, token, qualities }
 }
@@ -467,20 +558,6 @@ function useCountdown(targetTs: number | null) {
 }
 
 // ─── HLS Player ───────────────────────────────────────────────
-// FIX ORB BLOCK:
-// Native HLS (`video.src = src`) TIDAK BISA mengirim custom header seperti
-// `x-api-token`. Kalau token wajib (worker mewajibkan header ini), request
-// native <video> akan ditolak server (401/403 dengan body JSON, bukan media),
-// dan browser mem-block response itu sebagai opaque response
-// (net::ERR_BLOCKED_BY_ORB) karena content-type tidak sesuai ekspektasi <video>.
-//
-// Fix: kalau ada token, JANGAN pernah pakai jalur native HLS — selalu pakai
-// hls.js, supaya xhrSetup bisa inject header di setiap request (manifest,
-// variant playlist, maupun segment). Native HLS hanya dipakai sebagai fallback
-// kalau memang tidak ada token sama sekali, ATAU hls.js tidak didukung sama
-// sekali di browser tersebut — dan dalam kasus itu token disisipkan juga
-// sebagai query param (?token=) sebagai pengaman tambahan, jaga-jaga server
-// juga menerima token lewat query selain header.
 function HlsPlayer({
   src, className, token,
 }: {
@@ -496,8 +573,6 @@ function HlsPlayer({
     let hls: import("hls.js").default | null = null
     let cancelled = false
 
-    // Sisipkan token sebagai query param juga (pengaman untuk native HLS
-    // fallback). Tidak masalah kalau dobel dengan header saat dipakai hls.js.
     const srcWithToken = (() => {
       if (!token) return src
       try {
@@ -517,8 +592,6 @@ function HlsPlayer({
       const { default: Hls } = await import("hls.js")
       if (cancelled || !videoRef.current) return
       if (!Hls.isSupported()) {
-        // hls.js tidak didukung sama sekali → fallback native (kalau bisa),
-        // token tetap disisipkan lewat query param di srcWithToken.
         if (canNativeHLS) video.src = srcWithToken
         return
       }
@@ -536,11 +609,8 @@ function HlsPlayer({
     }
 
     if (token) {
-      // Ada token wajib → selalu lewat hls.js, jangan native HLS,
-      // supaya header x-api-token bisa disisipkan di setiap request.
       setupHlsJs()
     } else if (canNativeHLS) {
-      // Tidak ada token → native HLS aman dipakai (mis. Safari/iOS).
       video.src = src
     } else {
       setupHlsJs()
@@ -611,6 +681,62 @@ function IdnQualitySelector({
   )
 }
 
+// ─── IDN2 Quality Selector ────────────────────────────────────
+function Idn2QualitySelector({
+  qualities,
+  currentQuality,
+  onSelect,
+}: {
+  qualities: Idn2Quality[]
+  currentQuality: Idn2Quality | null
+  onSelect: (q: Idn2Quality | null) => void
+}) {
+  const [open, setOpen] = useState(false)
+
+  if (!qualities.length) return null
+
+  return (
+    <div className="relative">
+      <button
+        onClick={() => setOpen(p => !p)}
+        className="flex items-center gap-1.5 rounded-full bg-black/60 backdrop-blur-sm border border-white/10 px-3 py-1.5 text-[11px] font-bold text-white hover:bg-black/80 transition-colors"
+      >
+        <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <circle cx="12" cy="12" r="3" />
+          <path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 4.93a10 10 0 0 0 0 14.14" strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} />
+        </svg>
+        {currentQuality ? currentQuality.name : "Auto"}
+      </button>
+
+      {open && (
+        <div className="absolute bottom-[calc(100%+6px)] right-0 z-30 min-w-[180px] rounded-2xl border border-white/10 bg-gray-900/95 backdrop-blur-xl p-2 shadow-2xl">
+          <p className="px-2 pb-1.5 text-[9px] font-bold uppercase tracking-widest text-white/30">Kualitas</p>
+          <button
+            onClick={() => { onSelect(null); setOpen(false) }}
+            className={`mb-0.5 w-full rounded-xl px-3 py-2 text-left text-xs transition-colors ${
+              !currentQuality ? "bg-white/10 text-white font-bold" : "text-white/60 hover:bg-white/5"
+            }`}
+          >
+            ⚡ Auto
+          </button>
+          {qualities.map(q => (
+            <button
+              key={q.index}
+              onClick={() => { onSelect(q); setOpen(false) }}
+              className={`mb-0.5 flex w-full items-center justify-between rounded-xl px-3 py-2 text-left text-xs transition-colors ${
+                currentQuality?.index === q.index ? "bg-white/10 text-white font-bold" : "text-white/60 hover:bg-white/5"
+              }`}
+            >
+              <span>{q.name}</span>
+              <span className="text-[10px] opacity-50">{q.bandwidth_label}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ─── Server Selector ──────────────────────────────────────────
 function ServerSelector({
   activeServer,
@@ -634,6 +760,18 @@ function ServerSelector({
         <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
           <circle cx="12" cy="12" r="10" />
           <path d="M12 8v4l3 3" />
+        </svg>
+      ),
+    },
+    {
+      id:   "idn2",
+      label: "IDN 2",
+      available: true,
+      icon: (
+        <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+          <circle cx="12" cy="12" r="10" />
+          <path d="M12 8v4l3 3" />
+          <path d="M17 17l2 2" strokeLinecap="round" />
         </svg>
       ),
     },
@@ -1253,12 +1391,19 @@ function PlayerView({
   const showCountdown = isScheduled && countdown.diff > 0
 
   // ── Server selector state ────────────────────────────────────
-  const [activeServer,     setActiveServerState] = useState<ServerType>("idn")
-  const [idnStreamData,    setIdnStreamData]    = useState<IdnStreamData | null>(null)
-  const [idnCurrentQuality, setIdnCurrentQuality] = useState<IdnQuality | null>(null)
-  const [idnLoading,       setIdnLoading]       = useState(false)
-  const [idnError,         setIdnError]         = useState("")
+  const [activeServer,      setActiveServerState]  = useState<ServerType>("idn")
+  const [idnStreamData,     setIdnStreamData]      = useState<IdnStreamData | null>(null)
+  const [idnCurrentQuality, setIdnCurrentQuality]  = useState<IdnQuality | null>(null)
+  const [idnLoading,        setIdnLoading]          = useState(false)
+  const [idnError,          setIdnError]            = useState("")
   const idnLoadedRef = useRef(false)
+
+  // ── IDN2 state ───────────────────────────────────────────────
+  const [idn2StreamData,     setIdn2StreamData]     = useState<Idn2StreamData | null>(null)
+  const [idn2CurrentQuality, setIdn2CurrentQuality] = useState<Idn2Quality | null>(null)
+  const [idn2Loading,        setIdn2Loading]         = useState(false)
+  const [idn2Error,          setIdn2Error]           = useState("")
+  const idn2LoadedRef = useRef(false)
 
   // ── Chat user ────────────────────────────────────────────────
   const [chatUser,        setChatUser]        = useState<ChatUser | null>(null)
@@ -1288,7 +1433,7 @@ function PlayerView({
 
   useEffect(() => { loadTheaterLineup() }, [loadTheaterLineup])
 
-  // ── Load IDN stream via GiStream ──────────────────────────────
+  // ── Load IDN stream via GiStream (CTV) ───────────────────────
   const loadIdnStream = useCallback(async () => {
     if (!show.slug) { setIdnError("Slug show tidak tersedia"); return }
     setIdnLoading(true)
@@ -1296,13 +1441,30 @@ function PlayerView({
     try {
       const data = await getIdnStreamData(show.slug)
       setIdnStreamData(data)
-      setIdnCurrentQuality(null) // default: auto (streams[0])
+      setIdnCurrentQuality(null)
     } catch (e: any) {
       setIdnError(e?.message || "Gagal memuat stream IDN")
     } finally {
       setIdnLoading(false)
     }
   }, [show.slug])
+
+  // ── Load IDN2 stream via v1 (pure M3U8) ──────────────────────
+const loadIdn2Stream = useCallback(async () => {
+  if (!show.showId) { setIdn2Error("Show ID tidak tersedia"); return }
+  if (!show.slug)   { setIdn2Error("Slug show tidak tersedia"); return }  // ← tambah guard
+  setIdn2Loading(true)
+  setIdn2Error("")
+  try {
+    const data = await getIdn2StreamData(show.showId, show.slug)  // ← pass slug
+    setIdn2StreamData(data)
+    setIdn2CurrentQuality(null)
+  } catch (e: any) {
+    setIdn2Error(e?.message || "Gagal memuat stream IDN 2")
+  } finally {
+    setIdn2Loading(false)
+  }
+}, [show.showId, show.slug])  // ← tambah show.slug di deps
 
   // ── Switch server ─────────────────────────────────────────────
   const handleServerChange = useCallback(async (server: ServerType) => {
@@ -1311,7 +1473,11 @@ function PlayerView({
       idnLoadedRef.current = true
       await loadIdnStream()
     }
-  }, [loadIdnStream])
+    if (server === "idn2" && !idn2LoadedRef.current) {
+      idn2LoadedRef.current = true
+      await loadIdn2Stream()
+    }
+  }, [loadIdnStream, loadIdn2Stream])
 
   // ── Auto-load IDN on mount when live ─────────────────────────
   useEffect(() => {
@@ -1321,16 +1487,18 @@ function PlayerView({
     }
   }, [isLive, loadIdnStream])
 
-  // ── IDN quality change ────────────────────────────────────────
-  const handleIdnQualityChange = useCallback((q: IdnQuality | null) => {
-    setIdnCurrentQuality(q)
-  }, [])
-
   // ── Active IDN URL (quality-aware) ────────────────────────────
   const idnStreamUrl = (() => {
     if (!idnStreamData) return null
     if (idnCurrentQuality) return idnCurrentQuality.manual_url
     return idnStreamData.url
+  })()
+
+  // ── Active IDN2 URL (quality-aware) ───────────────────────────
+  const idn2StreamUrl = (() => {
+    if (!idn2StreamData) return null
+    if (idn2CurrentQuality) return idn2CurrentQuality.url
+    return idn2StreamData.url
   })()
 
   // ── RTMP / YouTube from streamData ────────────────────────────
@@ -1340,6 +1508,11 @@ function PlayerView({
 
   const hasRtmp    = !!rtmpUrl
   const hasYoutube = !!youtubeUrl
+
+  // ── Loading state for server selector ────────────────────────
+  const isServerLoading =
+    (activeServer === "idn" && idnLoading) ||
+    (activeServer === "idn2" && idn2Loading)
 
   // ── Chat init ─────────────────────────────────────────────────
   useEffect(() => {
@@ -1437,7 +1610,7 @@ function PlayerView({
             {show.image_url && (
               <img src={show.image_url} alt={show.title}
                 className={`absolute inset-0 h-full w-full object-cover transition-opacity ${
-                  isLive && (idnStreamUrl || rtmpUrl || youtubeUrl || fallbackUrl) ? "opacity-0" : "opacity-60"
+                  isLive && (idnStreamUrl || idn2StreamUrl || rtmpUrl || youtubeUrl || fallbackUrl) ? "opacity-0" : "opacity-60"
                 }`}
               />
             )}
@@ -1463,6 +1636,32 @@ function PlayerView({
                 <HlsPlayer
                   src={idnStreamUrl}
                   token={idnStreamData?.token}
+                  className="absolute inset-0 h-full w-full object-contain bg-black"
+                />
+              ) : null
+            )}
+
+            {/* IDN2 server (v1 pure M3U8) */}
+            {isLive && activeServer === "idn2" && (
+              idn2Loading ? (
+                <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/60 gap-3">
+                  <div className="h-8 w-8 animate-spin rounded-full border-2 border-white/20 border-t-white" />
+                  <p className="text-xs text-white/50">Memuat stream IDN 2...</p>
+                </div>
+              ) : idn2Error ? (
+                <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/70 gap-3">
+                  <svg className="h-8 w-8 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 9v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  <p className="text-xs text-white/50">{idn2Error}</p>
+                  <button onClick={loadIdn2Stream} className="rounded-lg bg-white/10 px-3 py-1.5 text-xs text-white hover:bg-white/20 transition-colors">
+                    Coba Lagi
+                  </button>
+                </div>
+              ) : idn2StreamUrl ? (
+                <HlsPlayer
+                  src={idn2StreamUrl}
+                  token={idn2StreamData?.token}
                   className="absolute inset-0 h-full w-full object-contain bg-black"
                 />
               ) : null
@@ -1523,13 +1722,24 @@ function PlayerView({
               </div>
             )}
 
-            {/* IDN quality selector (bottom-right in-player) */}
+            {/* IDN quality selector */}
             {isLive && activeServer === "idn" && idnStreamData && (idnStreamData.qualities.length > 1) && (
               <div className="absolute bottom-3 right-3 z-20">
                 <IdnQualitySelector
                   qualities={idnStreamData.qualities}
                   currentQuality={idnCurrentQuality}
-                  onSelect={handleIdnQualityChange}
+                  onSelect={setIdnCurrentQuality}
+                />
+              </div>
+            )}
+
+            {/* IDN2 quality selector */}
+            {isLive && activeServer === "idn2" && idn2StreamData && (idn2StreamData.qualities.length > 1) && (
+              <div className="absolute bottom-3 right-3 z-20">
+                <Idn2QualitySelector
+                  qualities={idn2StreamData.qualities}
+                  currentQuality={idn2CurrentQuality}
+                  onSelect={setIdn2CurrentQuality}
                 />
               </div>
             )}
@@ -1575,7 +1785,7 @@ function PlayerView({
                   onChange={handleServerChange}
                   hasRtmp={hasRtmp}
                   hasYoutube={hasYoutube}
-                  loading={idnLoading && activeServer === "idn"}
+                  loading={isServerLoading}
                 />
                 {/* IDN stream note */}
                 {activeServer === "idn" && idnStreamData && (
@@ -1586,6 +1796,18 @@ function PlayerView({
                 )}
                 {activeServer === "idn" && idnError && (
                   <button onClick={loadIdnStream} className="text-[10px] text-red-400 hover:text-red-300 underline transition-colors">
+                    Retry
+                  </button>
+                )}
+                {/* IDN2 stream note */}
+                {activeServer === "idn2" && idn2StreamData && (
+                  <p className="text-[10px] text-white/25 flex items-center gap-1">
+                    <span className="inline-flex h-1.5 w-1.5 rounded-full bg-blue-500" />
+                    GiStream-V2 · {idn2StreamData.qualities.length} kualitas tersedia
+                  </p>
+                )}
+                {activeServer === "idn2" && idn2Error && (
+                  <button onClick={loadIdn2Stream} className="text-[10px] text-red-400 hover:text-red-300 underline transition-colors">
                     Retry
                   </button>
                 )}
@@ -1613,6 +1835,13 @@ function PlayerView({
             {isLive && activeServer === "idn" && !idnLoading && !idnStreamUrl && !idnError && (
               <div className="rounded-lg bg-yellow-500/10 border border-yellow-500/20 px-3 py-2 text-xs text-yellow-400">
                 Stream IDN belum tersedia untuk show ini.
+              </div>
+            )}
+
+            {/* No stream warning (IDN2) */}
+            {isLive && activeServer === "idn2" && !idn2Loading && !idn2StreamUrl && !idn2Error && (
+              <div className="rounded-lg bg-yellow-500/10 border border-yellow-500/20 px-3 py-2 text-xs text-yellow-400">
+                Stream IDN 2 belum tersedia untuk show ini.
               </div>
             )}
           </div>

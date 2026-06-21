@@ -838,14 +838,18 @@ const fetchMembershipPlans = useCallback(async () => {
     setStreamLoading(false)
   }, [isAdmin])
 
-  // Initial load
 useEffect(() => {
   if (!loading && isAdmin) {
     fetchStats()
     fetchUsers()
+  }
+}, [loading, isAdmin, fetchStats, fetchUsers])
+
+useEffect(() => {
+  if (!loading) {
     fetchBirthdays()
   }
-}, [loading, isAdmin, fetchStats, fetchUsers, fetchBirthdays])
+}, [loading, fetchBirthdays])
 
   // Section-based lazy loading
   useEffect(() => {

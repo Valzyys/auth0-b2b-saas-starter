@@ -382,6 +382,43 @@ function TabBar({ tabs, active, onChange }: {
   )
 }
 
+function UpcomingBirthdaySection({ data, loading }: { data: BirthdayMember[]; loading: boolean }) {
+  if (loading) {
+    return <div className="h-28 rounded-xl border bg-muted/30 animate-pulse" />
+  }
+  if (!data.length) return null
+  const upcoming = data.slice(0, 10)
+  return (
+    <div>
+      <SectionHeader title="Upcoming Birthday" sub="Member JKT48 yang ulang tahun dalam waktu dekat" />
+      <div className="flex gap-3 overflow-x-auto pb-2 -mx-1 px-1">
+        {upcoming.map(m => (
+          <div key={m.url_key} className="flex flex-col items-center gap-1.5 shrink-0 w-24 rounded-xl border p-3 bg-card">
+            <div className="relative h-16 w-16 rounded-full overflow-hidden bg-muted ring-1 ring-border">
+              <img src={m.img} alt={m.name} className="h-full w-full object-cover"
+                onError={e => { (e.target as HTMLImageElement).style.display = "none" }} />
+              {m.is_birthday_today && (
+                <span className="absolute inset-0 flex items-center justify-center bg-pink-500/70 text-base">
+                  🎉
+                </span>
+              )}
+            </div>
+            <p className="text-xs font-medium text-center truncate w-full">{m.name}</p>
+            <p className="text-[10px] text-muted-foreground text-center">
+              {m.is_birthday_today
+                ? "Hari ini! 🎂"
+                : m.next_birthday_countdown.days > 0
+                ? `${m.next_birthday_countdown.days} hari lagi`
+                : `${m.next_birthday_countdown.hours} jam lagi`}
+            </p>
+            <p className="text-[10px] text-muted-foreground">→ {m.age_after_birthday} th</p>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 // ── Main Component ────────────────────────────────────────────
 
 export default function DashboardHome() {
@@ -607,7 +644,9 @@ const [replayFormLoading, setReplayFormLoading] = useState(false)
 const [editReplay, setEditReplay] = useState<ReplayRow | null>(null)
 const [editReplayMsg, setEditReplayMsg] = useState("")
 const [editReplayLoading, setEditReplayLoading] = useState(false)
-  
+
+const [birthdays, setBirthdays] = useState<BirthdayMember[]>([])
+const [birthdaysLoading, setBirthdaysLoading] = useState(false)
   // ═══════════════════════════════════════════════════════════
   // FETCH FUNCTIONS
   // ═══════════════════════════════════════════════════════════
@@ -633,6 +672,18 @@ const [editReplayLoading, setEditReplayLoading] = useState(false)
     setStatsLoading(false)
   }, [isAdmin])
 
+  const fetchBirthdays = useCallback(async () => {
+  setBirthdaysLoading(true)
+  try {
+    const res = await fetch(`https://v5.jkt48connect.com/api/jkt48/birthday?apikey=${API_KEY}`)
+    const data = await res.json()
+    const list: BirthdayMember[] = Array.isArray(data) ? data : (data.data || [])
+    list.sort((a, b) => a.next_birthday_countdown.total_seconds - b.next_birthday_countdown.total_seconds)
+    setBirthdays(list)
+  } catch (_) {}
+  setBirthdaysLoading(false)
+}, [])
+  
   const fetchUsers = useCallback(async () => {
     if (!isAdmin) return
     setUserLoading(true)
@@ -788,12 +839,13 @@ const fetchMembershipPlans = useCallback(async () => {
   }, [isAdmin])
 
   // Initial load
-  useEffect(() => {
-    if (!loading && isAdmin) {
-      fetchStats()
-      fetchUsers()
-    }
-  }, [loading, isAdmin, fetchStats, fetchUsers])
+useEffect(() => {
+  if (!loading && isAdmin) {
+    fetchStats()
+    fetchUsers()
+    fetchBirthdays()
+  }
+}, [loading, isAdmin, fetchStats, fetchUsers, fetchBirthdays])
 
   // Section-based lazy loading
   useEffect(() => {
@@ -1585,6 +1637,8 @@ async function handleToggleReplay(showId: string) {
                 </div>
               </div>
 
+              <UpcomingBirthdaySection data={birthdays} loading={birthdaysLoading} />
+              
               <div className="grid grid-cols-1 gap-6 sm:grid-cols-3">
                 <div>
                   <SectionHeader title="Order Manual" sub="via payment_method" />

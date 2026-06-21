@@ -1204,11 +1204,19 @@ function LiveChatPanel({
             </div>
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-1.5 flex-wrap mb-0.5">
-  <span className="text-xs font-semibold text-white/80 leading-none truncate max-w-[120px]">{msg.full_name || msg.username}</span>
+  <span
+    className={`text-xs font-semibold leading-none truncate max-w-[120px] ${
+      isDevAccount(msg.full_name || msg.username)
+        ? "dev-name-shimmer"
+        : "text-white/80"
+    }`}
+  >
+    {msg.full_name || msg.username}
+  </span>
   {isDevAccount(msg.full_name || msg.username) && (
     <>
       <svg
-        className="h-3.5 w-3.5 text-blue-400 shrink-0"
+        className="dev-badge-pulse h-3.5 w-3.5 text-blue-400 shrink-0"
         viewBox="0 0 24 24"
         fill="currentColor"
         aria-label="Verified"
@@ -1225,7 +1233,9 @@ function LiveChatPanel({
     </>
   )}
   {getRoleBadge(msg.role)}
-  <span className="text-[10px] text-white/20 ml-auto opacity-0 group-hover:opacity-100 transition-opacity">{formatTime(msg.timestamp)}</span>
+  <span className="text-[10px] text-white/20 ml-auto opacity-0 group-hover:opacity-100 transition-opacity">
+    {formatTime(msg.timestamp)}
+  </span>
 </div>
               <p className="text-xs leading-relaxed text-white/50 break-words">{msg.text}</p>
             </div>

@@ -1541,6 +1541,7 @@ async function handleToggleReplay(showId: string) {
           <StatCard label="Status Email" value={user.is_verified ? "Verified" : "Unverified"} sub={user.is_verified ? "Email terverifikasi" : "Cek inbox kamu"} />
           <StatCard label="Expired" value={isActive ? new Date(user.membership_expired_at!).toLocaleDateString("id-ID", { day: "numeric", month: "short", year: "numeric" }) : "—"} sub={isActive ? "Tanggal berakhir" : "Belum berlangganan"} />
         </div>
+        <UpcomingBirthdaySection data={birthdays} loading={birthdaysLoading} />
         <div className="flex flex-1 items-center justify-center rounded-3xl border bg-muted/30 shadow-sm">
           <div className="flex max-w-[480px] flex-col items-center gap-1 text-center p-8">
             {!isActive ? (
@@ -1637,7 +1638,7 @@ async function handleToggleReplay(showId: string) {
                 </div>
               </div>
 
-              <UpcomingBirthdaySection data={birthdays} loading={birthdaysLoading} />
+              
               
               <div className="grid grid-cols-1 gap-6 sm:grid-cols-3">
                 <div>

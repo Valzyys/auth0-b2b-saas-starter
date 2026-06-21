@@ -394,7 +394,7 @@ function UpcomingBirthdaySection({ data, loading }: { data: BirthdayMember[]; lo
       <div className="flex gap-3 overflow-x-auto pb-2 -mx-1 px-1">
         {upcoming.map(m => (
           <div key={m.url_key} className="flex flex-col items-center gap-1.5 shrink-0 w-24 rounded-xl border p-3 bg-card">
-            <div className="relative h-16 w-16 rounded-full overflow-hidden bg-muted ring-1 ring-border">
+            <div className="relative h-16 w-16 rounded-md overflow-hidden bg-muted ring-1 ring-border">
               <img src={m.img} alt={m.name} className="h-full w-full object-cover"
                 onError={e => { (e.target as HTMLImageElement).style.display = "none" }} />
               {m.is_birthday_today && (

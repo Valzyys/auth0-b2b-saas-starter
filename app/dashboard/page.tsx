@@ -16,6 +16,26 @@ type AdminStats = {
   new_7d: number
 }
 
+type BirthdayMember = {
+  name: string
+  birthdate: string
+  img: string
+  room_id: number
+  url_key: string
+  current_age: number
+  age_after_birthday: number
+  next_birthday: string
+  is_birthday_today: boolean
+  time_zone: string
+  next_birthday_countdown: {
+    days: number
+    hours: number
+    minutes: number
+    seconds: number
+    total_seconds: number
+  }
+}
+
 type OrderStats = {
   total: number
   pending: number

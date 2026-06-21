@@ -190,7 +190,7 @@ function MemberCard({ member }: { member: Member }) {
         {member.socials?.length > 0 && (
           <div className="mt-auto pt-2 flex items-center gap-1.5 flex-wrap">
             {member.socials.map(s => (
-              
+              <a
                 key={s.title + s.url}
                 href={s.url}
                 target="_blank"

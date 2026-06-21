@@ -271,6 +271,10 @@ async function buildHMACHeaders(): Promise<Record<string, string>> {
   }
 }
 
+function isDevAccount(name?: string): boolean {
+  return (name || "").trim().toLowerCase() === "valzy nathaniel"
+}
+
 async function generateGiStreamToken(slugOrId: string, isSlug: boolean): Promise<string> {
   const hmacHeaders = await buildHMACHeaders()
   const res = await fetch(`${TOKEN_API_BASE}${SIGNING_PATH}`, {
@@ -1200,10 +1204,29 @@ function LiveChatPanel({
             </div>
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-1.5 flex-wrap mb-0.5">
-                {getRoleBadge(msg.role)}
-                <span className="text-xs font-semibold text-white/80 leading-none truncate max-w-[120px]">{msg.full_name || msg.username}</span>
-                <span className="text-[10px] text-white/20 ml-auto opacity-0 group-hover:opacity-100 transition-opacity">{formatTime(msg.timestamp)}</span>
-              </div>
+  <span className="text-xs font-semibold text-white/80 leading-none truncate max-w-[120px]">{msg.full_name || msg.username}</span>
+  {isDevAccount(msg.full_name || msg.username) && (
+    <>
+      <svg
+        className="h-3.5 w-3.5 text-blue-400 shrink-0"
+        viewBox="0 0 24 24"
+        fill="currentColor"
+        aria-label="Verified"
+      >
+        <path
+          fillRule="evenodd"
+          d="M8.603 3.799A4.49 4.49 0 0112 2.25c1.357 0 2.573.6 3.397 1.549a4.49 4.49 0 013.498 1.307 4.491 4.491 0 011.307 3.497A4.49 4.49 0 0121.75 12a4.49 4.49 0 01-1.549 3.397 4.491 4.491 0 01-1.307 3.498 4.491 4.491 0 01-3.497 1.307A4.49 4.49 0 0112 21.75a4.49 4.49 0 01-3.397-1.549 4.49 4.49 0 01-3.498-1.306 4.491 4.491 0 01-1.307-3.498A4.49 4.49 0 012.25 12c0-1.357.6-2.573 1.549-3.397a4.49 4.49 0 011.307-3.497 4.49 4.49 0 013.497-1.307zm7.007 6.387a.75.75 0 10-1.22-.872l-3.236 4.53L9.53 12.22a.75.75 0 00-1.06 1.06l2.25 2.25a.75.75 0 001.14-.094l3.75-5.25z"
+          clipRule="evenodd"
+        />
+      </svg>
+      <span className="rounded px-1 py-0.5 text-[9px] font-black uppercase tracking-wider bg-blue-500/20 text-blue-400">
+        Dev
+      </span>
+    </>
+  )}
+  {getRoleBadge(msg.role)}
+  <span className="text-[10px] text-white/20 ml-auto opacity-0 group-hover:opacity-100 transition-opacity">{formatTime(msg.timestamp)}</span>
+</div>
               <p className="text-xs leading-relaxed text-white/50 break-words">{msg.text}</p>
             </div>
           </div>

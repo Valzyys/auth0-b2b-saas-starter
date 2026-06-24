@@ -1194,21 +1194,41 @@ function LiveChatPanel({
         )}
         {messages.map(msg => (
           <div key={msg.id} className="flex gap-2.5 items-start group">
-            <div className="shrink-0 h-7 w-7 rounded-full overflow-hidden bg-white/10 flex items-center justify-center ring-1 ring-white/10">
-              {msg.avatar_url ? (
-                <img src={msg.avatar_url} alt={msg.full_name || msg.username} className="h-full w-full object-cover"
-                  onError={e => { (e.target as HTMLImageElement).style.display = "none" }} />
-              ) : (
-                <span className="text-[10px] font-bold text-white/60">{getInitials(msg.full_name || msg.username)}</span>
-              )}
-            </div>
+            <div
+  className={`shrink-0 h-7 w-7 rounded-full ${
+    isDevAccount(msg.full_name || msg.username) ? "dev-avatar-ring" : ""
+  }`}
+>
+  <div className="relative h-full w-full rounded-full overflow-hidden bg-white/10 flex items-center justify-center ring-1 ring-white/10">
+    {msg.avatar_url ? (
+      <img
+        src={msg.avatar_url}
+        alt={msg.full_name || msg.username}
+        className="h-full w-full object-cover"
+        onError={e => { (e.target as HTMLImageElement).style.display = "none" }}
+      />
+    ) : (
+      <span className="text-[10px] font-bold text-white/60">
+        {getInitials(msg.full_name || msg.username)}
+      </span>
+    )}
+  </div>
+</div>
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-1.5 flex-wrap mb-0.5">
-  <span className="text-xs font-semibold text-white/80 leading-none truncate max-w-[120px]">{msg.full_name || msg.username}</span>
+  <span
+    className={`text-xs font-semibold leading-none truncate max-w-[120px] ${
+      isDevAccount(msg.full_name || msg.username)
+        ? "dev-name-shimmer"
+        : "text-white/80"
+    }`}
+  >
+    {msg.full_name || msg.username}
+  </span>
   {isDevAccount(msg.full_name || msg.username) && (
     <>
       <svg
-        className="h-3.5 w-3.5 text-blue-400 shrink-0"
+        className="dev-badge-pulse h-3.5 w-3.5 text-blue-400 shrink-0"
         viewBox="0 0 24 24"
         fill="currentColor"
         aria-label="Verified"
@@ -1225,7 +1245,9 @@ function LiveChatPanel({
     </>
   )}
   {getRoleBadge(msg.role)}
-  <span className="text-[10px] text-white/20 ml-auto opacity-0 group-hover:opacity-100 transition-opacity">{formatTime(msg.timestamp)}</span>
+  <span className="text-[10px] text-white/20 ml-auto opacity-0 group-hover:opacity-100 transition-opacity">
+    {formatTime(msg.timestamp)}
+  </span>
 </div>
               <p className="text-xs leading-relaxed text-white/50 break-words">{msg.text}</p>
             </div>
@@ -1243,40 +1265,46 @@ function LiveChatPanel({
         ) : chatUser ? (
           <div className="space-y-2">
             <div className="flex items-center gap-2">
-              <div className="h-5 w-5 rounded-full overflow-hidden bg-white/10 shrink-0">
-                {chatUser.avatar ? (
-                  <img src={chatUser.avatar} alt={chatUser.full_name} className="h-full w-full object-cover" />
-                ) : (
-                  <div className="h-full w-full flex items-center justify-center text-[8px] font-bold text-white/50">
-                    {getInitials(chatUser.full_name || chatUser.username)}
-                  </div>
-                )}
-              </div>
-              <span className="text-[11px] text-white/40 truncate">{chatUser.full_name || chatUser.username}</span>
-            </div>
-            <div className="flex gap-2">
-              <input
-                ref={inputRef} type="text" value={input}
-                onChange={e => setInput(e.target.value)}
-                onKeyDown={e => { if (e.key === "Enter") handleSend() }}
-                placeholder="Tulis komentar..." maxLength={300} disabled={sending}
-                className="flex-1 rounded-xl border border-white/10 bg-white/5 px-3 py-2.5 text-xs text-white placeholder-white/20 outline-none focus:border-white/20 transition-colors disabled:opacity-50"
-              />
-              <button
-                onClick={handleSend} disabled={!input.trim() || sending}
-                className={`h-9 w-9 rounded-xl shrink-0 flex items-center justify-center transition-all ${
-                  input.trim() && !sending ? "bg-white text-black hover:bg-white/90 active:scale-95" : "bg-white/10 text-white/20 cursor-not-allowed"
-                }`}
-              >
-                {sending ? (
-                  <div className="h-3.5 w-3.5 border-2 border-current/30 border-t-current rounded-full animate-spin" />
-                ) : (
-                  <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M6 12L3.269 3.126A59.768 59.768 0 0121.485 12 59.77 59.77 0 013.27 20.876L5.999 12zm0 0h7.5" />
-                  </svg>
-                )}
-              </button>
-            </div>
+  <div
+    className={`h-5 w-5 rounded-full shrink-0 ${
+      isDevAccount(chatUser.full_name || chatUser.username) ? "dev-avatar-ring" : ""
+    }`}
+  >
+    <div className="h-full w-full rounded-full overflow-hidden bg-white/10">
+      {chatUser.avatar ? (
+        <img src={chatUser.avatar} alt={chatUser.full_name} className="h-full w-full object-cover" />
+      ) : (
+        <div className="h-full w-full flex items-center justify-center text-[8px] font-bold text-white/50">
+          {getInitials(chatUser.full_name || chatUser.username)}
+        </div>
+      )}
+    </div>
+  </div>
+  <span className="text-[11px] text-white/40 truncate">{chatUser.full_name || chatUser.username}</span>
+</div>
+<div className="flex gap-2">
+  <input
+    ref={inputRef} type="text" value={input}
+    onChange={e => setInput(e.target.value)}
+    onKeyDown={e => { if (e.key === "Enter") handleSend() }}
+    placeholder="Tulis komentar..." maxLength={300} disabled={sending}
+    className="flex-1 rounded-xl border border-white/10 bg-white/5 px-3 py-2.5 text-xs text-white placeholder-white/20 outline-none focus:border-white/20 transition-colors disabled:opacity-50"
+  />
+  <button
+    onClick={handleSend} disabled={!input.trim() || sending}
+    className={`h-9 w-9 rounded-xl shrink-0 flex items-center justify-center transition-all ${
+      input.trim() && !sending ? "bg-white text-black hover:bg-white/90 active:scale-95" : "bg-white/10 text-white/20 cursor-not-allowed"
+    }`}
+  >
+    {sending ? (
+      <div className="h-3.5 w-3.5 border-2 border-current/30 border-t-current rounded-full animate-spin" />
+    ) : (
+      <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M6 12L3.269 3.126A59.768 59.768 0 0121.485 12 59.77 59.77 0 013.27 20.876L5.999 12zm0 0h7.5" />
+      </svg>
+    )}
+  </button>
+</div>
           </div>
         ) : (
           <div className="text-center py-1 space-y-2">

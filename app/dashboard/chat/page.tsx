@@ -5,6 +5,7 @@ import { useEffect, useState, useRef, useCallback } from "react"
 // ─── API Constants ─────────────────────────────────────────
 const API_BASE = "https://v5.jkt48connect.com/api/team48"
 const API_KEY  = "JKTCONNECT"
+const IMAGE_PROXY_BASE = "https://pay.jkt48connect.com/api/proxy-image"
 
 // ─── Types — disesuaikan dengan struktur API nyata ──────────
 
@@ -99,6 +100,14 @@ function cleanBody(text: string): string {
     .replace(/[\u200B-\u200D\uFEFF\u2060\u180E\u00AD]/g, "") // zero-width
     .replace(/[\u{E0000}-\u{E007F}]/gu, "")                   // tag chars
     .trim()
+}
+
+// Bungkus URL gambar lewat image proxy, biar aman dari hotlink block / referrer issue
+function proxyImageUrl(url: string): string {
+  if (!url) return url
+  // Jangan double-proxy kalau sudah lewat proxy
+  if (url.includes("/api/proxy-image")) return url
+  return `${IMAGE_PROXY_BASE}?url=${encodeURIComponent(url)}`
 }
 
 function formatDateShort(dateStr: string): string {
@@ -240,7 +249,7 @@ function Lightbox({ src, onClose }: { src: string; onClose: () => void }) {
       onClick={onClose}
     >
       <img
-        src={src}
+        src={proxyImageUrl(src)}
         alt="Lampiran"
         className="max-h-[90vh] max-w-[90vw] rounded-lg object-contain shadow-2xl"
         onClick={(e) => e.stopPropagation()}
@@ -316,10 +325,9 @@ function AttachmentBubble({ att }: { att: PmAttachment }) {
           onClick={() => setLightbox(att.file_path)}
         >
           <img
-            src={att.file_path}
+            src={proxyImageUrl(att.file_path)}
             alt="Gambar"
             referrerPolicy="no-referrer"
-           // crossOrigin="anonymous"
             className="max-h-56 max-w-[240px] rounded-xl object-cover block"
             loading="lazy"
             onError={() => setImgError(true)}

@@ -17,6 +17,8 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   Loader2,
+  ShoppingBag,
+  MessageCircle,
 } from "lucide-react"
 import { ModeToggle } from "@/components/mode-toggle"
 import { useAuth } from "@/hooks/useAuth"
@@ -123,6 +125,8 @@ const STATIC_NAV = [
   { href: "/dashboard",            label: "Home",       icon: LayoutDashboard },
   { href: "/dashboard/show",       label: "Jadwal",     icon: CalendarDays },
   { href: "/dashboard/membership", label: "Membership", icon: CreditCard },
+  { href: "/dashboard/pm",         label: "PM",         icon: ShoppingBag },
+  { href: "/dashboard/chat",       label: "Chat",       icon: MessageCircle },
 ]
 
 // ─── Layout ───────────────────────────────────────────────────

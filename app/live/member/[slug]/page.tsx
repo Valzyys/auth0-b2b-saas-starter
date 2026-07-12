@@ -274,6 +274,66 @@ function useIdnChatReadOnly(chatRoomId: string | null) {
   return { messages, connected, joined, status, retry }
 }
 
+// ─── useTopGifters ───────────────────────────────────────────────
+// IDN-only leaderboard/podium. Lazy: only polls while `enabled` is
+// true (i.e. while the person actually has the Gift tab open).
+interface TopGifter {
+  rank:         number
+  uuid:         string
+  name:         string
+  username:     string
+  image_url:    string | null
+  level_tier:   number
+  total_gold:   number
+  total_point:  number
+}
+
+function useTopGifters(slug: string | null, enabled: boolean) {
+  const [gifters, setGifters] = useState<TopGifter[]>([])
+  const [loading, setLoading] = useState(false)
+  const [error,   setError]   = useState(false)
+  const mountedRef = useRef(true)
+  const timerRef    = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  const fetchGifters = useCallback(async () => {
+    if (!slug || !mountedRef.current) return
+    setLoading(true)
+    try {
+      const res = await fetch(
+        `https://v5.jkt48connect.com/api/jkt48/live/idn/top-gifter?apikey=JKTCONNECT&slug=${encodeURIComponent(slug)}`
+      )
+      const json = await res.json()
+      if (!mountedRef.current) return
+      if (json?.success && Array.isArray(json?.data)) {
+        setGifters(json.data)
+        setError(false)
+      } else {
+        setError(true)
+      }
+    } catch {
+      if (mountedRef.current) setError(true)
+    } finally {
+      if (mountedRef.current) setLoading(false)
+    }
+  }, [slug])
+
+  useEffect(() => {
+    mountedRef.current = true
+    if (!enabled || !slug) {
+      if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null }
+      return
+    }
+    fetchGifters()
+    timerRef.current = setInterval(fetchGifters, 30000)
+    return () => {
+      mountedRef.current = false
+      if (timerRef.current) clearInterval(timerRef.current)
+    }
+  }, [enabled, slug, fetchGifters])
+
+  return { gifters, loading, error, retry: fetchGifters }
+}
+
 // ─── useShowroomCommentsReadOnly ────────────────────────────────
 // Polls Showroom's public comment_log endpoint every 5s (read-only,
 // no login/post — mirrors the RN app's comment polling behavior).
@@ -409,6 +469,128 @@ function QualitySelector({
   )
 }
 
+// ─── Gift Podium (top 3 + ranked list) ─────────────────────────
+function GiftPodium({
+  gifters, loading, error, onRetry,
+}: {
+  gifters: TopGifter[]
+  loading: boolean
+  error:   boolean
+  onRetry: () => void
+}) {
+  if (loading && gifters.length === 0) {
+    return (
+      <div className="flex h-full min-h-[200px] flex-col items-center justify-center gap-3 py-6">
+        <div className="h-6 w-6 animate-spin rounded-full border-2 border-white/20 border-t-yellow-500" />
+        <p className="text-xs text-white/30">Memuat top gifter...</p>
+      </div>
+    )
+  }
+  if (error && gifters.length === 0) {
+    return (
+      <div className="flex h-full min-h-[200px] flex-col items-center justify-center gap-3 py-6 text-center px-4">
+        <p className="text-sm font-medium text-white/30">Gagal memuat leaderboard</p>
+        <button onClick={onRetry} className="rounded-lg bg-white/10 px-3 py-1.5 text-xs text-white hover:bg-white/20 transition-colors">
+          Coba Lagi
+        </button>
+      </div>
+    )
+  }
+  if (gifters.length === 0) {
+    return (
+      <div className="flex h-full min-h-[200px] flex-col items-center justify-center gap-2 py-6 text-center px-4">
+        <svg className="h-6 w-6 text-white/15" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M20 12v10H4V12M22 7H2v5h20V7zM12 22V7M12 7H7.5a2.5 2.5 0 010-5C11 2 12 7 12 7zM12 7h4.5a2.5 2.5 0 000-5C13 2 12 7 12 7z" />
+        </svg>
+        <p className="text-xs text-white/30">Belum ada gifter</p>
+      </div>
+    )
+  }
+
+  const podium = [gifters[1], gifters[0], gifters[2]].filter(Boolean) as TopGifter[]
+  const rest   = gifters.slice(3)
+
+  const podiumStyle = (rank: number) => {
+    if (rank === 1) return { h: "h-24", ring: "ring-yellow-400/60", badge: "bg-yellow-400 text-black", crown: true }
+    if (rank === 2) return { h: "h-16", ring: "ring-white/30", badge: "bg-white/20 text-white", crown: false }
+    return { h: "h-12", ring: "ring-orange-400/40", badge: "bg-orange-400/30 text-orange-200", crown: false }
+  }
+
+  return (
+    <div className="px-3 py-4 space-y-5">
+      {/* Podium */}
+      <div className="flex items-end justify-center gap-2 px-2">
+        {podium.map(g => {
+          const s = podiumStyle(g.rank)
+          return (
+            <div key={g.uuid ?? g.rank} className="flex flex-1 max-w-[110px] flex-col items-center gap-1.5">
+              <div className="relative">
+                {s.crown && (
+                  <svg className="absolute -top-4 left-1/2 -translate-x-1/2 h-4 w-4 text-yellow-400" fill="currentColor" viewBox="0 0 24 24">
+                    <path d="M5 16L3 6l5.5 4L12 4l3.5 6L21 6l-2 10H5zm0 2h14v2H5v-2z" />
+                  </svg>
+                )}
+                <div className={`h-12 w-12 rounded-full overflow-hidden bg-white/10 ring-2 ${s.ring}`}>
+                  {g.image_url ? (
+                    <img src={g.image_url} alt={g.name} className="h-full w-full object-cover" loading="lazy" />
+                  ) : (
+                    <div className="h-full w-full flex items-center justify-center text-xs font-bold text-white/50">
+                      {getInitials(g.name)}
+                    </div>
+                  )}
+                </div>
+                <span className={`absolute -bottom-1 left-1/2 -translate-x-1/2 rounded-full px-1.5 py-0.5 text-[9px] font-black ${s.badge}`}>
+                  #{g.rank}
+                </span>
+              </div>
+              <p className="mt-1.5 max-w-full truncate text-[11px] font-semibold text-white/80">{g.name}</p>
+              <div className="flex items-center gap-1">
+                <svg className="h-2.5 w-2.5 text-yellow-400" fill="currentColor" viewBox="0 0 24 24">
+                  <path d="M20 12v10H4V12M22 7H2v5h20V7zM12 22V7M12 7H7.5a2.5 2.5 0 010-5C11 2 12 7 12 7zM12 7h4.5a2.5 2.5 0 000-5C13 2 12 7 12 7z" />
+                </svg>
+                <span className="text-[10px] font-bold text-yellow-400/90 tabular-nums">{g.total_gold?.toLocaleString("id-ID")}</span>
+              </div>
+              <div className={`w-full rounded-t-lg bg-white/5 ${s.h}`} />
+            </div>
+          )
+        })}
+      </div>
+
+      {/* Ranked list (4th onward) */}
+      {rest.length > 0 && (
+        <div className="space-y-1.5">
+          {rest.map(g => (
+            <div key={g.uuid ?? g.rank} className="flex items-center gap-2.5 rounded-xl bg-white/[0.03] px-2.5 py-2">
+              <div className="flex h-6 w-7 shrink-0 items-center justify-center rounded-md border border-white/10 bg-black/30">
+                <span className="text-[10px] font-bold text-white/40">#{g.rank}</span>
+              </div>
+              <div className="h-7 w-7 shrink-0 rounded-full overflow-hidden bg-white/10">
+                {g.image_url ? (
+                  <img src={g.image_url} alt={g.name} className="h-full w-full object-cover" loading="lazy" />
+                ) : (
+                  <div className="h-full w-full flex items-center justify-center text-[9px] font-bold text-white/50">
+                    {getInitials(g.name)}
+                  </div>
+                )}
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="truncate text-xs font-medium text-white/70">{g.name}</p>
+                <p className="truncate text-[10px] text-white/25">@{g.username} · Lv{g.level_tier}</p>
+              </div>
+              <div className="flex shrink-0 items-center gap-1">
+                <svg className="h-2.5 w-2.5 text-yellow-400" fill="currentColor" viewBox="0 0 24 24">
+                  <path d="M20 12v10H4V12M22 7H2v5h20V7zM12 22V7M12 7H7.5a2.5 2.5 0 010-5C11 2 12 7 12 7zM12 7h4.5a2.5 2.5 0 000-5C13 2 12 7 12 7z" />
+                </svg>
+                <span className="text-[10px] font-bold text-yellow-400/80 tabular-nums">{g.total_gold?.toLocaleString("id-ID")}</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ─── Live Chat Panel (read-only) ───────────────────────────────
 // IDN      → live from wss://chat.idn.app/
 // Showroom → polling https://www.showroom-live.com/api/live/comment_log
@@ -418,13 +600,19 @@ function QualitySelector({
 // and messages can be hidden/shown without the panel changing height.
 function LiveChatPanel({ show }: { show: LiveShow }) {
   const isShowroom = show.type?.toLowerCase() === "showroom"
+  const canShowGift = !isShowroom && !!show.slug
 
   const idnChat = useIdnChatReadOnly(!isShowroom ? (show.chat_room_id || null) : null)
   const srChat  = useShowroomCommentsReadOnly(isShowroom ? (show.room_id ?? null) : null)
 
   const [chatOpen,     setChatOpen]     = useState(true)
+  const [activeTab,    setActiveTab]    = useState<"chat" | "gift">("chat")
   const [isNearBottom, setIsNearBottom] = useState(true)
   const [newCount,     setNewCount]     = useState(0)
+
+  const giftEnabled = chatOpen && activeTab === "gift" && canShowGift
+  const { gifters, loading: giftersLoading, error: giftersError, retry: retryGifters } =
+    useTopGifters(canShowGift ? (show.slug ?? null) : null, giftEnabled)
 
   const scrollRef   = useRef<HTMLDivElement>(null)
   const prevLenRef   = useRef(0)

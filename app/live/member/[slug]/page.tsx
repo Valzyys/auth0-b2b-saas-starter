@@ -167,31 +167,40 @@ function useIdnChatReadOnly(chatRoomId: string | null) {
     socket.onmessage = (evt) => {
       if (!mountedRef.current) return
       const raw: string = evt.data
-      if (raw.includes(" 001 ") || raw.includes(":Welcome")) {
-        socket.send(`@label=1 JOIN #${roomId}`)
-        setStatus("connected")
-        setConnected(true)
-        return
-      }
-      if (raw.includes(" PING ") || raw.startsWith("PING ")) {
-        const m = raw.match(/PING\s+:?(\S+)/)
-        const server = m ? m[1] : "irc-1.idn.app"
-        socket.send(`PONG :${server}`)
-        return
-      }
-      const isJoinAck =
-        (raw.includes(`JOIN #${roomId}`) && raw.includes(nickRef.current)) ||
-        raw.includes("JOINED") ||
-        (raw.includes("366") && raw.includes(roomId))
-      if (isJoinAck) { setJoined(true); return }
+      // Server can batch multiple IRC lines in a single WS frame, separated by CRLF/LF.
+      const lines = raw.split(/\r\n|\r|\n/).filter(Boolean)
 
-      if (raw.includes(`PRIVMSG #${roomId} `)) {
-        try {
-          const marker = `PRIVMSG #${roomId} :`
-          const idx = raw.indexOf(marker)
-          if (idx !== -1) {
-            const jsonStr = raw.slice(idx + marker.length).trim()
-            const event = JSON.parse(jsonStr)
+      for (const line of lines) {
+        if (line.includes(" 001 ") || line.includes(":Welcome")) {
+          socket.send(`@label=1 JOIN #${roomId}`)
+          setStatus("connected")
+          setConnected(true)
+          continue
+        }
+
+        if (line.includes(" PING ") || line.startsWith("PING ")) {
+          const m = line.match(/PING\s+:?(\S+)/)
+          const server = m ? m[1] : "irc-1.idn.app"
+          socket.send(`PONG :${server}`)
+          continue
+        }
+
+        const isJoinAck =
+          (line.includes(`JOIN #${roomId}`) && line.includes(nickRef.current)) ||
+          line.includes("JOINED") ||
+          (line.includes(" 366 ") && line.includes(roomId))
+        if (isJoinAck) { setJoined(true); continue }
+
+        // Match "PRIVMSG #<channel> :<json...>" regardless of prefix/tags before it.
+        const privmsgMatch = line.match(/PRIVMSG\s+#(\S+)\s+:(\{.*\})\s*$/)
+        if (privmsgMatch) {
+          const [, channel, payload] = privmsgMatch
+          // Loosen the comparison in case of trailing chars / encoding quirks.
+          const channelMatches =
+            channel === roomId || channel.endsWith(roomId) || roomId.endsWith(channel)
+          if (!channelMatches) continue
+          try {
+            const event = JSON.parse(payload)
             if (event.chat?.message) {
               pushMessage({
                 id:         event.chat?.id || makeUuid(),
@@ -203,8 +212,12 @@ function useIdnChatReadOnly(chatRoomId: string | null) {
                 timestamp:  Date.now(),
               })
             }
+          } catch (err) {
+            if (process.env.NODE_ENV !== "production") {
+              console.warn("[idn-chat] failed to parse PRIVMSG payload", err, line)
+            }
           }
-        } catch {}
+        }
       }
     }
 

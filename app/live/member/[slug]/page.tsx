@@ -36,15 +36,30 @@ interface LiveShow {
 }
 
 interface ChatMessage {
-  id:         string
-  username:   string
-  text:       string
-  timestamp:  string
+  id:          string
+  userName:    string
+  userAvatar?: string
+  colorCode?:  string
+  levelTier?:  number
+  message:     string
+  timestamp:   number
 }
 
 // ─── Helpers ────────────────────────────────────────────────
 function generateMsgId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+}
+
+function makeUuid(): string {
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, c => {
+    const r = (Math.random() * 16) | 0
+    return (c === "x" ? r : (r & 0x3) | 0x8).toString(16)
+  })
+}
+
+function formatHHMM(ts: number): string {
+  const d = new Date(ts)
+  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`
 }
 
 function generateViewerId(): string {
@@ -93,6 +108,155 @@ function useViewerCount(roomKey: string | null) {
   }, [roomKey])
 
   return viewerCount
+}
+
+// ─── useIdnChatReadOnly ─────────────────────────────────────────
+// Connects directly to wss://chat.idn.app/ (IRC-like protocol) as a
+// silent observer: joins the room, receives CHAT events, never sends.
+function useIdnChatReadOnly(chatRoomId: string | null) {
+  const [messages,  setMessages]  = useState<ChatMessage[]>([])
+  const [connected, setConnected] = useState(false)
+  const [joined,    setJoined]    = useState(false)
+  const [status, setStatus] = useState<"idle" | "connecting" | "connected" | "reconnecting" | "error">("idle")
+
+  const wsRef            = useRef<WebSocket | null>(null)
+  const mountedRef        = useRef(true)
+  const reconnectTimer    = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const chatRoomIdRef     = useRef<string | null>(chatRoomId)
+  const nickRef           = useRef<string>("")
+
+  const pushMessage = useCallback((msg: ChatMessage) => {
+    setMessages(prev => {
+      const next = [...prev, msg]
+      return next.length > 150 ? next.slice(next.length - 150) : next
+    })
+  }, [])
+
+  const createSocket = useCallback((roomId: string) => {
+    if (wsRef.current) {
+      try { wsRef.current.close(1000, "reconnect") } catch {}
+      wsRef.current = null
+    }
+    setStatus("connecting")
+    setConnected(false)
+    setJoined(false)
+
+    const guestId = Array.from({ length: 6 }, () =>
+      "abcdefghijklmnopqrstuvwxyz0123456789"[Math.floor(Math.random() * 36)]
+    ).join("")
+    const nick = `idn-${guestId}-web`
+    nickRef.current = nick
+    const uuid = makeUuid()
+
+    const socket = new WebSocket("wss://chat.idn.app/")
+    wsRef.current = socket
+
+    socket.onopen = () => {
+      if (!mountedRef.current) return
+      socket.send("CAP LS 302")
+      socket.send(`NICK ${nick}`)
+      socket.send(`USER ${uuid} 0 * null`)
+      socket.send(
+        "CAP REQ :account-notify account-tag away-notify batch cap-notify " +
+        "chghost echo-message extended-join invite-notify labeled-response " +
+        "message-tags multi-prefix server-time setname userhost-in-names"
+      )
+      socket.send("CAP END")
+    }
+
+    socket.onmessage = (evt) => {
+      if (!mountedRef.current) return
+      const raw: string = evt.data
+      if (raw.includes(" 001 ") || raw.includes(":Welcome")) {
+        socket.send(`@label=1 JOIN #${roomId}`)
+        setStatus("connected")
+        setConnected(true)
+        return
+      }
+      if (raw.includes(" PING ") || raw.startsWith("PING ")) {
+        const m = raw.match(/PING\s+:?(\S+)/)
+        const server = m ? m[1] : "irc-1.idn.app"
+        socket.send(`PONG :${server}`)
+        return
+      }
+      const isJoinAck =
+        (raw.includes(`JOIN #${roomId}`) && raw.includes(nickRef.current)) ||
+        raw.includes("JOINED") ||
+        (raw.includes("366") && raw.includes(roomId))
+      if (isJoinAck) { setJoined(true); return }
+
+      if (raw.includes(`CHAT #${roomId}`)) {
+        try {
+          const marker = `:CHAT #${roomId} `
+          const idx = raw.indexOf(marker)
+          if (idx !== -1) {
+            const event = JSON.parse(raw.slice(idx + marker.length))
+            if (event.chat?.message) {
+              pushMessage({
+                id:         makeUuid(),
+                userName:   event.user?.name ?? event.user?.username ?? "Unknown",
+                userAvatar: event.user?.avatar_url ?? undefined,
+                colorCode:  event.user?.color_code ? `#${event.user.color_code}`.replace("##", "#") : undefined,
+                levelTier:  event.user?.level_tier ?? undefined,
+                message:    String(event.chat.message),
+                timestamp:  Date.now(),
+              })
+            }
+          }
+        } catch {}
+      }
+    }
+
+    socket.onclose = (e) => {
+      if (!mountedRef.current) return
+      wsRef.current = null
+      setConnected(false)
+      setJoined(false)
+      if (e.code !== 1000) {
+        setStatus("reconnecting")
+        reconnectTimer.current = setTimeout(() => {
+          if (mountedRef.current && chatRoomIdRef.current) createSocket(chatRoomIdRef.current)
+        }, 4000)
+      } else {
+        setStatus("idle")
+      }
+    }
+
+    socket.onerror = () => {
+      if (!mountedRef.current) return
+      setConnected(false)
+      setJoined(false)
+      setStatus("reconnecting")
+      wsRef.current = null
+      reconnectTimer.current = setTimeout(() => {
+        if (mountedRef.current && chatRoomIdRef.current) createSocket(chatRoomIdRef.current)
+      }, 4000)
+    }
+  }, [pushMessage])
+
+  useEffect(() => {
+    mountedRef.current = true
+    chatRoomIdRef.current = chatRoomId
+    setMessages([])
+    if (!chatRoomId) { setStatus("error"); return }
+    createSocket(chatRoomId)
+    return () => {
+      mountedRef.current = false
+      if (reconnectTimer.current) clearTimeout(reconnectTimer.current)
+      if (wsRef.current) {
+        try { wsRef.current.close(1000, "unmount") } catch {}
+        wsRef.current = null
+      }
+    }
+  }, [chatRoomId, createSocket])
+
+  const retry = useCallback(() => {
+    if (reconnectTimer.current) clearTimeout(reconnectTimer.current)
+    setMessages([])
+    if (chatRoomIdRef.current) createSocket(chatRoomIdRef.current)
+  }, [createSocket])
+
+  return { messages, connected, joined, status, retry }
 }
 
 // ─── HLS Player ───────────────────────────────────────────────
@@ -174,75 +338,36 @@ function QualitySelector({
   )
 }
 
-// ─── Live Chat Panel (public, no login) ────────────────────────
-function LiveChatPanel({ roomKey }: { roomKey: string }) {
-  const [messages, setMessages] = useState<ChatMessage[]>([])
-  const [input,    setInput]    = useState("")
-  const [username, setUsername] = useState("")
-  const [sending,  setSending]  = useState(false)
+// ─── Live Chat Panel (read-only, live from IDN wss://chat.idn.app/) ──
+function LiveChatPanel({ chatRoomId }: { chatRoomId: string | null }) {
+  const { messages, connected, joined, status, retry } = useIdnChatReadOnly(chatRoomId)
   const chatEndRef = useRef<HTMLDivElement>(null)
-  const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null)
-  const inputRef   = useRef<HTMLInputElement>(null)
-
-  useEffect(() => {
-    // generate a lightweight guest name, persisted locally
-    try {
-      const stored = localStorage.getItem("t48_guest_name")
-      if (stored) { setUsername(stored); return }
-      const guest = `Guest${Math.floor(1000 + Math.random() * 9000)}`
-      localStorage.setItem("t48_guest_name", guest)
-      setUsername(guest)
-    } catch {
-      setUsername(`Guest${Math.floor(1000 + Math.random() * 9000)}`)
-    }
-  }, [])
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" })
   }, [messages.length])
 
-  useEffect(() => {
-    if (!roomKey) return
-    const channelName = `t48-live-chat-${roomKey}`
-    const channel = supabase.channel(channelName, { config: { broadcast: { ack: true } } })
-    channel
-      .on("broadcast", { event: "chat_message" }, ({ payload }: { payload: ChatMessage }) => {
-        setMessages(prev => {
-          if (prev.some(m => m.id === payload.id)) return prev
-          return [...prev.slice(-199), payload]
-        })
-      })
-      .subscribe()
-    channelRef.current = channel
-    return () => { supabase.removeChannel(channel); channelRef.current = null }
-  }, [roomKey])
+  const statusText =
+    connected && joined ? "Chat terhubung"
+    : connected && !joined ? "Bergabung ke room..."
+    : status === "reconnecting" ? "Menyambung ulang..."
+    : status === "connecting" ? "Menghubungkan..."
+    : status === "error" ? "Chat tidak tersedia"
+    : "Chat offline"
 
-  const handleSend = async () => {
-    const text = input.trim()
-    if (!text || sending) return
-    const msg: ChatMessage = { id: generateMsgId(), username, text, timestamp: new Date().toISOString() }
-    setSending(true)
-    setInput("")
-    setMessages(prev => [...prev.slice(-199), msg])
-    await channelRef.current?.send({ type: "broadcast", event: "chat_message", payload: msg })
-    setSending(false)
-    inputRef.current?.focus()
-  }
-
-  const formatTime = (iso: string) => {
-    try { return new Date(iso).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" }) }
-    catch { return "" }
-  }
+  const statusColor =
+    connected && joined ? "bg-green-500"
+    : connected ? "bg-yellow-500"
+    : status === "reconnecting" || status === "connecting" ? "bg-yellow-500"
+    : "bg-white/20"
 
   return (
     <div className="flex flex-col h-full">
       <div className="flex items-center justify-between px-4 py-3 border-b border-white/10 shrink-0">
         <div className="flex items-center gap-2">
-          <span className="relative flex h-2 w-2">
-            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75" />
-            <span className="relative inline-flex rounded-full h-2 w-2 bg-red-500" />
-          </span>
+          <span className={`inline-flex h-2 w-2 rounded-full ${statusColor}`} />
           <span className="text-sm font-semibold text-white">Live Chat</span>
+          <span className="rounded-full bg-white/10 px-2 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-white/40">Read-only</span>
         </div>
         <span className="text-xs text-white/30 tabular-nums">{messages.length} pesan</span>
       </div>
@@ -256,55 +381,54 @@ function LiveChatPanel({ roomKey }: { roomKey: string }) {
               </svg>
             </div>
             <div>
-              <p className="text-sm font-medium text-white/30">Belum ada pesan</p>
-              <p className="text-xs text-white/20 mt-0.5">Jadilah yang pertama komentar!</p>
+              <p className="text-sm font-medium text-white/30">{statusText}</p>
+              <p className="text-xs text-white/20 mt-0.5">
+                {status === "error" ? "Room chat tidak tersedia untuk live ini." : "Pesan dari chat IDN akan muncul di sini."}
+              </p>
             </div>
+            {status === "reconnecting" || status === "error" ? (
+              <button onClick={retry} className="rounded-lg bg-white/10 px-3 py-1.5 text-xs text-white hover:bg-white/20 transition-colors">
+                Coba Lagi
+              </button>
+            ) : null}
           </div>
         )}
-        {messages.map(msg => (
-          <div key={msg.id} className="flex gap-2.5 items-start group">
-            <div className="shrink-0 h-7 w-7 rounded-full overflow-hidden bg-white/10 flex items-center justify-center ring-1 ring-white/10">
-              <span className="text-[10px] font-bold text-white/60">{getInitials(msg.username)}</span>
-            </div>
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-1.5 flex-wrap mb-0.5">
-                <span className="text-xs font-semibold leading-none truncate max-w-[120px] text-white/80">{msg.username}</span>
-                <span className="text-[10px] text-white/20 ml-auto opacity-0 group-hover:opacity-100 transition-opacity">
-                  {formatTime(msg.timestamp)}
-                </span>
+        {messages.map(msg => {
+          const accent = msg.colorCode || "#DC1F2E"
+          return (
+            <div key={msg.id} className="flex gap-2.5 items-start group">
+              <div
+                className="shrink-0 h-7 w-7 rounded-full overflow-hidden flex items-center justify-center ring-1"
+                style={{ backgroundColor: accent + "22", borderColor: accent + "55" }}
+              >
+                {msg.userAvatar ? (
+                  <img src={msg.userAvatar} alt={msg.userName} className="h-full w-full object-cover" />
+                ) : (
+                  <span className="text-[10px] font-bold" style={{ color: accent }}>{getInitials(msg.userName)}</span>
+                )}
               </div>
-              <p className="text-xs leading-relaxed text-white/50 break-words">{msg.text}</p>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-1.5 flex-wrap mb-0.5">
+                  <span className="text-xs font-semibold leading-none truncate max-w-[120px]" style={{ color: accent }}>
+                    {msg.userName}
+                  </span>
+                  {msg.levelTier != null && (
+                    <span className="rounded px-1 py-0.5 text-[9px] font-bold text-white/40 bg-white/5">Lv{msg.levelTier}</span>
+                  )}
+                  <span className="text-[10px] text-white/20 ml-auto opacity-0 group-hover:opacity-100 transition-opacity">
+                    {formatHHMM(msg.timestamp)}
+                  </span>
+                </div>
+                <p className="text-xs leading-relaxed text-white/50 break-words">{msg.message}</p>
+              </div>
             </div>
-          </div>
-        ))}
+          )
+        })}
         <div ref={chatEndRef} />
       </div>
 
-      <div className="px-3 py-3 border-t border-white/10 shrink-0">
-        <div className="flex gap-2">
-          <input
-            ref={inputRef} type="text" value={input}
-            onChange={e => setInput(e.target.value)}
-            onKeyDown={e => { if (e.key === "Enter") handleSend() }}
-            placeholder="Tulis komentar..." maxLength={300} disabled={sending}
-            className="flex-1 rounded-xl border border-white/10 bg-white/5 px-3 py-2.5 text-xs text-white placeholder-white/20 outline-none focus:border-white/20 transition-colors disabled:opacity-50"
-          />
-          <button
-            onClick={handleSend} disabled={!input.trim() || sending}
-            className={`h-9 w-9 rounded-xl shrink-0 flex items-center justify-center transition-all ${
-              input.trim() && !sending ? "bg-white text-black hover:bg-white/90 active:scale-95" : "bg-white/10 text-white/20 cursor-not-allowed"
-            }`}
-          >
-            {sending ? (
-              <div className="h-3.5 w-3.5 border-2 border-current/30 border-t-current rounded-full animate-spin" />
-            ) : (
-              <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M6 12L3.269 3.126A59.768 59.768 0 0121.485 12 59.77 59.77 0 013.27 20.876L5.999 12zm0 0h7.5" />
-              </svg>
-            )}
-          </button>
-        </div>
-        <p className="mt-1.5 text-[10px] text-white/20">Ngobrol sebagai {username}</p>
+      <div className="px-3 py-2.5 border-t border-white/10 shrink-0">
+        <p className="text-[10px] text-white/25 text-center">{statusText} · chat hanya bisa dibaca</p>
       </div>
     </div>
   )
@@ -405,7 +529,7 @@ function PlayerView({ show }: { show: LiveShow }) {
 
         {/* ── Chat panel ── */}
         <div className="w-full lg:w-80 xl:w-96 border-t lg:border-t-0 lg:border-l border-white/10 flex flex-col shrink-0 lg:h-[calc(100vh-57px)] lg:sticky lg:top-[57px]">
-          <LiveChatPanel roomKey={roomKey} />
+          <LiveChatPanel chatRoomId={show.chat_room_id || null} />
         </div>
       </div>
     </div>

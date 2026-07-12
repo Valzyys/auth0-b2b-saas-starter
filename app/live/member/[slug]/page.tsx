@@ -185,15 +185,16 @@ function useIdnChatReadOnly(chatRoomId: string | null) {
         (raw.includes("366") && raw.includes(roomId))
       if (isJoinAck) { setJoined(true); return }
 
-      if (raw.includes(`CHAT #${roomId}`)) {
+      if (raw.includes(`PRIVMSG #${roomId} `)) {
         try {
-          const marker = `:CHAT #${roomId} `
+          const marker = `PRIVMSG #${roomId} :`
           const idx = raw.indexOf(marker)
           if (idx !== -1) {
-            const event = JSON.parse(raw.slice(idx + marker.length))
+            const jsonStr = raw.slice(idx + marker.length).trim()
+            const event = JSON.parse(jsonStr)
             if (event.chat?.message) {
               pushMessage({
-                id:         makeUuid(),
+                id:         event.chat?.id || makeUuid(),
                 userName:   event.user?.name ?? event.user?.username ?? "Unknown",
                 userAvatar: event.user?.avatar_url ?? undefined,
                 colorCode:  event.user?.color_code ? `#${event.user.color_code}`.replace("##", "#") : undefined,

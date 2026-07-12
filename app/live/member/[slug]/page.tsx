@@ -23,14 +23,15 @@ interface LiveShow {
   img:                string
   img_alt:            string
   url_key:            string
-  slug:               string
+  slug?:              string
   room_id:            number
+  live_id?:           number
   is_graduate:        boolean
   is_group:           boolean
-  chat_room_id:       string
+  chat_room_id?:      string
   started_at:         string
   type:               string
-  identifier:         string
+  identifier?:        string
   showId:             string | null
   streaming_url_list: StreamingUrl[]
 }
@@ -273,6 +274,62 @@ function useIdnChatReadOnly(chatRoomId: string | null) {
   return { messages, connected, joined, status, retry }
 }
 
+// ─── useShowroomCommentsReadOnly ────────────────────────────────
+// Polls Showroom's public comment_log endpoint every 5s (read-only,
+// no login/post — mirrors the RN app's comment polling behavior).
+function useShowroomCommentsReadOnly(roomId: number | null) {
+  const [messages, setMessages] = useState<ChatMessage[]>([])
+  const [loading,  setLoading]  = useState(true)
+  const [error,    setError]    = useState(false)
+  const [lastPoll, setLastPoll] = useState<Date | null>(null)
+  const mountedRef = useRef(true)
+  const timerRef    = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  const fetchComments = useCallback(async () => {
+    if (!roomId || !mountedRef.current) return
+    try {
+      const res = await fetch(`https://www.showroom-live.com/api/live/comment_log?room_id=${roomId}`, {
+        headers: { Accept: "application/json" },
+      })
+      if (!res.ok) throw new Error(`status ${res.status}`)
+      const data = await res.json()
+      const parsed: ChatMessage[] = (data?.comment_log ?? [])
+        .map((c: any) => ({
+          id:         `${c.user_id}-${c.created_at}`,
+          userName:   c.name ?? "Unknown",
+          userAvatar: c.avatar_url || undefined,
+          levelTier:  c.class_level ?? undefined,
+          message:    c.comment ?? "",
+          timestamp:  (c.created_at ?? 0) * 1000,
+        }))
+        .sort((a: ChatMessage, b: ChatMessage) => a.timestamp - b.timestamp)
+      if (!mountedRef.current) return
+      setMessages(parsed)
+      setLastPoll(new Date())
+      setError(false)
+    } catch {
+      if (mountedRef.current) setError(true)
+    } finally {
+      if (mountedRef.current) setLoading(false)
+    }
+  }, [roomId])
+
+  useEffect(() => {
+    mountedRef.current = true
+    setMessages([])
+    if (!roomId) { setLoading(false); return }
+    setLoading(true)
+    fetchComments()
+    timerRef.current = setInterval(fetchComments, 5000)
+    return () => {
+      mountedRef.current = false
+      if (timerRef.current) clearInterval(timerRef.current)
+    }
+  }, [roomId, fetchComments])
+
+  return { messages, loading, error, lastPoll, retry: fetchComments }
+}
+
 // ─── HLS Player ───────────────────────────────────────────────
 function HlsPlayer({ src, className }: { src: string; className?: string }) {
   const videoRef = useRef<HTMLVideoElement>(null)
@@ -352,38 +409,54 @@ function QualitySelector({
   )
 }
 
-// ─── Live Chat Panel (read-only, live from IDN wss://chat.idn.app/) ──
-function LiveChatPanel({ chatRoomId }: { chatRoomId: string | null }) {
-  const { messages, connected, joined, status, retry } = useIdnChatReadOnly(chatRoomId)
+// ─── Live Chat Panel (read-only) ───────────────────────────────
+// IDN    → live from wss://chat.idn.app/
+// Showroom → polling https://www.showroom-live.com/api/live/comment_log
+function LiveChatPanel({ show }: { show: LiveShow }) {
+  const isShowroom = show.type?.toLowerCase() === "showroom"
+
+  const idnChat = useIdnChatReadOnly(!isShowroom ? (show.chat_room_id || null) : null)
+  const srChat  = useShowroomCommentsReadOnly(isShowroom ? (show.room_id ?? null) : null)
+
   const chatEndRef = useRef<HTMLDivElement>(null)
+
+  const messages   = isShowroom ? srChat.messages : idnChat.messages
+  const statusText = isShowroom
+    ? (srChat.loading && srChat.messages.length === 0 ? "Memuat komentar..."
+      : srChat.error ? "Gagal memuat komentar"
+      : "Komentar terhubung")
+    : (idnChat.connected && idnChat.joined ? "Chat terhubung"
+      : idnChat.connected && !idnChat.joined ? "Bergabung ke room..."
+      : idnChat.status === "reconnecting" ? "Menyambung ulang..."
+      : idnChat.status === "connecting" ? "Menghubungkan..."
+      : idnChat.status === "error" ? "Chat tidak tersedia"
+      : "Chat offline")
+
+  const statusColor = isShowroom
+    ? (srChat.error ? "bg-red-500" : srChat.loading ? "bg-yellow-500" : "bg-green-500")
+    : (idnChat.connected && idnChat.joined ? "bg-green-500"
+      : idnChat.connected ? "bg-yellow-500"
+      : idnChat.status === "reconnecting" || idnChat.status === "connecting" ? "bg-yellow-500"
+      : "bg-white/20")
+
+  const canRetry = isShowroom
+    ? srChat.error
+    : (idnChat.status === "reconnecting" || idnChat.status === "error")
+  const retry = isShowroom ? srChat.retry : idnChat.retry
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" })
   }, [messages.length])
-
-  const statusText =
-    connected && joined ? "Chat terhubung"
-    : connected && !joined ? "Bergabung ke room..."
-    : status === "reconnecting" ? "Menyambung ulang..."
-    : status === "connecting" ? "Menghubungkan..."
-    : status === "error" ? "Chat tidak tersedia"
-    : "Chat offline"
-
-  const statusColor =
-    connected && joined ? "bg-green-500"
-    : connected ? "bg-yellow-500"
-    : status === "reconnecting" || status === "connecting" ? "bg-yellow-500"
-    : "bg-white/20"
 
   return (
     <div className="flex flex-col h-full">
       <div className="flex items-center justify-between px-4 py-3 border-b border-white/10 shrink-0">
         <div className="flex items-center gap-2">
           <span className={`inline-flex h-2 w-2 rounded-full ${statusColor}`} />
-          <span className="text-sm font-semibold text-white">Live Chat</span>
+          <span className="text-sm font-semibold text-white">{isShowroom ? "Komentar Live" : "Live Chat"}</span>
           <span className="rounded-full bg-white/10 px-2 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-white/40">Read-only</span>
         </div>
-        <span className="text-xs text-white/30 tabular-nums">{messages.length} pesan</span>
+        <span className="text-xs text-white/30 tabular-nums">{messages.length} {isShowroom ? "komentar" : "pesan"}</span>
       </div>
 
       <div className="flex-1 overflow-y-auto px-3 py-3 space-y-3 min-h-0">
@@ -397,18 +470,18 @@ function LiveChatPanel({ chatRoomId }: { chatRoomId: string | null }) {
             <div>
               <p className="text-sm font-medium text-white/30">{statusText}</p>
               <p className="text-xs text-white/20 mt-0.5">
-                {status === "error" ? "Room chat tidak tersedia untuk live ini." : "Pesan dari chat IDN akan muncul di sini."}
+                {isShowroom ? "Komentar dari Showroom akan muncul di sini." : "Pesan dari chat IDN akan muncul di sini."}
               </p>
             </div>
-            {status === "reconnecting" || status === "error" ? (
+            {canRetry && (
               <button onClick={retry} className="rounded-lg bg-white/10 px-3 py-1.5 text-xs text-white hover:bg-white/20 transition-colors">
                 Coba Lagi
               </button>
-            ) : null}
+            )}
           </div>
         )}
         {messages.map(msg => {
-          const accent = msg.colorCode || "#DC1F2E"
+          const accent = msg.colorCode || (isShowroom ? "#FF4F6D" : "#DC1F2E")
           return (
             <div key={msg.id} className="flex gap-2.5 items-start group">
               <div
@@ -442,7 +515,11 @@ function LiveChatPanel({ chatRoomId }: { chatRoomId: string | null }) {
       </div>
 
       <div className="px-3 py-2.5 border-t border-white/10 shrink-0">
-        <p className="text-[10px] text-white/25 text-center">{statusText} · chat hanya bisa dibaca</p>
+        <p className="text-[10px] text-white/25 text-center">
+          {statusText}
+          {isShowroom && srChat.lastPoll ? ` · update ${formatHHMM(srChat.lastPoll.getTime())}` : ""}
+          {" · "}{isShowroom ? "polling tiap 5 detik" : "chat hanya bisa dibaca"}
+        </p>
       </div>
     </div>
   )
@@ -451,7 +528,7 @@ function LiveChatPanel({ chatRoomId }: { chatRoomId: string | null }) {
 // ─── Player View ────────────────────────────────────────────────
 function PlayerView({ show }: { show: LiveShow }) {
   const [currentQuality, setCurrentQuality] = useState<StreamingUrl | null>(null)
-  const roomKey = show.identifier || show.slug
+  const roomKey = show.identifier || show.slug || show.url_key
   const viewerCount = useViewerCount(roomKey)
 
   const activeUrl = currentQuality?.url ?? show.streaming_url_list[0]?.url ?? null
@@ -543,7 +620,7 @@ function PlayerView({ show }: { show: LiveShow }) {
 
         {/* ── Chat panel ── */}
         <div className="w-full lg:w-80 xl:w-96 border-t lg:border-t-0 lg:border-l border-white/10 flex flex-col shrink-0 lg:h-[calc(100vh-57px)] lg:sticky lg:top-[57px]">
-          <LiveChatPanel chatRoomId={show.chat_room_id || null} />
+          <LiveChatPanel show={show} />
         </div>
       </div>
     </div>
@@ -566,7 +643,7 @@ export default function LiveSlugPage() {
       const res  = await fetch(LIVE_API)
       const data = await res.json()
       const list: LiveShow[] = Array.isArray(data) ? data : []
-      const found = list.find(s => s.slug === slug)
+      const found = list.find(s => s.slug === slug || s.url_key === slug)
       if (found) {
         setShow(found)
         setError("")

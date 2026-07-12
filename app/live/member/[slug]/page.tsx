@@ -681,28 +681,70 @@ function LiveChatPanel({ show }: { show: LiveShow }) {
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      {/* Header — always visible, toggles the panel below */}
-      <button
-        onClick={() => setChatOpen(v => !v)}
-        className="flex shrink-0 items-center justify-between border-b border-white/10 px-4 py-3 text-left"
-      >
-        <div className="flex items-center gap-2 min-w-0">
+      {/* Header — status dot + tab switcher (when gifts are available) on the left,
+          count + collapse toggle on the right. The switcher and the collapse
+          toggle are separate buttons so tapping a tab never also collapses. */}
+      <div className="flex shrink-0 items-center justify-between gap-2 border-b border-white/10 px-3 py-2.5">
+        <div className="flex min-w-0 items-center gap-2">
           <span className={`inline-flex h-2 w-2 shrink-0 rounded-full ${statusColor}`} />
-          <span className="text-sm font-semibold text-white">{isShowroom ? "Komentar Live" : "Live Chat"}</span>
-          <span className="hidden sm:inline-flex rounded-full bg-white/10 px-2 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-white/40">Read-only</span>
+          {canShowGift ? (
+            <div className="flex items-center gap-0.5 rounded-full bg-white/5 p-0.5">
+              <button
+                onClick={() => setActiveTab("chat")}
+                className={`rounded-full px-2.5 py-1 text-xs font-semibold transition-colors ${
+                  activeTab === "chat" ? "bg-white/15 text-white" : "text-white/40 hover:text-white/70"
+                }`}
+              >
+                Chat
+              </button>
+              <button
+                onClick={() => setActiveTab("gift")}
+                className={`flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-semibold transition-colors ${
+                  activeTab === "gift" ? "bg-white/15 text-white" : "text-white/40 hover:text-white/70"
+                }`}
+              >
+                <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 12v10H4V12M22 7H2v5h20V7zM12 22V7M12 7H7.5a2.5 2.5 0 010-5C11 2 12 7 12 7zM12 7h4.5a2.5 2.5 0 000-5C13 2 12 7 12 7z" />
+                </svg>
+                Gift
+              </button>
+            </div>
+          ) : (
+            <>
+              <span className="text-sm font-semibold text-white">{isShowroom ? "Komentar Live" : "Live Chat"}</span>
+              <span className="hidden sm:inline-flex rounded-full bg-white/10 px-2 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-white/40">Read-only</span>
+            </>
+          )}
         </div>
-        <div className="flex items-center gap-2 shrink-0">
-          <span className="text-xs text-white/30 tabular-nums">{messages.length}</span>
-          <svg
-            className={`h-4 w-4 text-white/40 transition-transform ${chatOpen ? "rotate-180" : ""}`}
-            fill="none" viewBox="0 0 24 24" stroke="currentColor"
+        <div className="flex shrink-0 items-center gap-2">
+          <span className="text-xs text-white/30 tabular-nums">
+            {activeTab === "gift" ? gifters.length : messages.length}
+          </span>
+          <button
+            onClick={() => setChatOpen(v => !v)}
+            className="flex h-6 w-6 items-center justify-center rounded-full text-white/40 hover:bg-white/10 hover:text-white/70 transition-colors"
+            aria-label={chatOpen ? "Sembunyikan panel" : "Tampilkan panel"}
           >
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-          </svg>
+            <svg
+              className={`h-4 w-4 transition-transform ${chatOpen ? "rotate-180" : ""}`}
+              fill="none" viewBox="0 0 24 24" stroke="currentColor"
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+            </svg>
+          </button>
         </div>
-      </button>
+      </div>
 
-      {chatOpen ? (
+      {chatOpen && activeTab === "gift" ? (
+        <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain">
+          <GiftPodium
+            gifters={gifters}
+            loading={giftersLoading}
+            error={giftersError}
+            onRetry={retryGifters}
+          />
+        </div>
+      ) : chatOpen ? (
         <div className="relative flex-1 min-h-0">
           <div
             ref={scrollRef}
@@ -792,9 +834,15 @@ function LiveChatPanel({ show }: { show: LiveShow }) {
 
       <div className="shrink-0 border-t border-white/10 px-3 py-2">
         <p className="text-[10px] text-white/25 text-center truncate">
-          {statusText}
-          {isShowroom && srChat.lastPoll ? ` · update ${formatHHMM(srChat.lastPoll.getTime())}` : ""}
-          {" · "}{isShowroom ? "polling 5 detik" : "hanya bisa dibaca"}
+          {activeTab === "gift" ? (
+            <>Leaderboard gift IDN Live · update tiap 30 detik</>
+          ) : (
+            <>
+              {statusText}
+              {isShowroom && srChat.lastPoll ? ` · update ${formatHHMM(srChat.lastPoll.getTime())}` : ""}
+              {" · "}{isShowroom ? "polling 5 detik" : "hanya bisa dibaca"}
+            </>
+          )}
         </p>
       </div>
     </div>

@@ -410,17 +410,30 @@ function QualitySelector({
 }
 
 // ─── Live Chat Panel (read-only) ───────────────────────────────
-// IDN    → live from wss://chat.idn.app/
+// IDN      → live from wss://chat.idn.app/
 // Showroom → polling https://www.showroom-live.com/api/live/comment_log
+//
+// Scroll is locked to an internal container (never the page/window),
+// auto-follow only kicks in while the user is already near the bottom,
+// and messages can be hidden/shown without the panel changing height.
 function LiveChatPanel({ show }: { show: LiveShow }) {
   const isShowroom = show.type?.toLowerCase() === "showroom"
 
   const idnChat = useIdnChatReadOnly(!isShowroom ? (show.chat_room_id || null) : null)
   const srChat  = useShowroomCommentsReadOnly(isShowroom ? (show.room_id ?? null) : null)
 
-  const chatEndRef = useRef<HTMLDivElement>(null)
+  const [chatOpen,     setChatOpen]     = useState(true)
+  const [isNearBottom, setIsNearBottom] = useState(true)
+  const [newCount,     setNewCount]     = useState(0)
+
+  const scrollRef   = useRef<HTMLDivElement>(null)
+  const prevLenRef   = useRef(0)
 
   const messages   = isShowroom ? srChat.messages : idnChat.messages
+  // Cap what actually renders to the DOM — heavy chat rooms can push
+  // hundreds of lines/minute; only the tail is visually relevant.
+  const visible    = messages.slice(-120)
+
   const statusText = isShowroom
     ? (srChat.loading && srChat.messages.length === 0 ? "Memuat komentar..."
       : srChat.error ? "Gagal memuat komentar"
@@ -444,81 +457,156 @@ function LiveChatPanel({ show }: { show: LiveShow }) {
     : (idnChat.status === "reconnecting" || idnChat.status === "error")
   const retry = isShowroom ? srChat.retry : idnChat.retry
 
+  const scrollToBottom = useCallback((smooth = true) => {
+    const el = scrollRef.current
+    if (!el) return
+    el.scrollTo({ top: el.scrollHeight, behavior: smooth ? "smooth" : "auto" })
+    setNewCount(0)
+    setIsNearBottom(true)
+  }, [])
+
+  const handleScroll = useCallback(() => {
+    const el = scrollRef.current
+    if (!el) return
+    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight
+    const near = distanceFromBottom < 72
+    setIsNearBottom(near)
+    if (near) setNewCount(0)
+  }, [])
+
+  // Auto-follow: only scroll the internal container, never the page.
   useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: "smooth" })
-  }, [messages.length])
+    const grew = messages.length - prevLenRef.current
+    prevLenRef.current = messages.length
+    if (grew <= 0 || !chatOpen) return
+    if (isNearBottom) {
+      requestAnimationFrame(() => scrollToBottom(true))
+    } else {
+      setNewCount(c => Math.min(c + grew, 99))
+    }
+  }, [messages.length, chatOpen, isNearBottom, scrollToBottom])
+
+  // Jump to bottom once when opening the panel.
+  useEffect(() => {
+    if (chatOpen) requestAnimationFrame(() => scrollToBottom(false))
+  }, [chatOpen]) // eslint-disable-line
 
   return (
-    <div className="flex flex-col h-full">
-      <div className="flex items-center justify-between px-4 py-3 border-b border-white/10 shrink-0">
-        <div className="flex items-center gap-2">
-          <span className={`inline-flex h-2 w-2 rounded-full ${statusColor}`} />
+    <div className="flex h-full min-h-0 flex-col">
+      {/* Header — always visible, toggles the panel below */}
+      <button
+        onClick={() => setChatOpen(v => !v)}
+        className="flex shrink-0 items-center justify-between border-b border-white/10 px-4 py-3 text-left"
+      >
+        <div className="flex items-center gap-2 min-w-0">
+          <span className={`inline-flex h-2 w-2 shrink-0 rounded-full ${statusColor}`} />
           <span className="text-sm font-semibold text-white">{isShowroom ? "Komentar Live" : "Live Chat"}</span>
-          <span className="rounded-full bg-white/10 px-2 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-white/40">Read-only</span>
+          <span className="hidden sm:inline-flex rounded-full bg-white/10 px-2 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-white/40">Read-only</span>
         </div>
-        <span className="text-xs text-white/30 tabular-nums">{messages.length} {isShowroom ? "komentar" : "pesan"}</span>
-      </div>
+        <div className="flex items-center gap-2 shrink-0">
+          <span className="text-xs text-white/30 tabular-nums">{messages.length}</span>
+          <svg
+            className={`h-4 w-4 text-white/40 transition-transform ${chatOpen ? "rotate-180" : ""}`}
+            fill="none" viewBox="0 0 24 24" stroke="currentColor"
+          >
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+          </svg>
+        </div>
+      </button>
 
-      <div className="flex-1 overflow-y-auto px-3 py-3 space-y-3 min-h-0">
-        {messages.length === 0 && (
-          <div className="flex flex-col items-center justify-center h-full gap-3 py-10 text-center">
-            <div className="h-10 w-10 rounded-2xl bg-white/5 flex items-center justify-center">
-              <svg className="h-5 w-5 text-white/20" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
-              </svg>
-            </div>
-            <div>
-              <p className="text-sm font-medium text-white/30">{statusText}</p>
-              <p className="text-xs text-white/20 mt-0.5">
-                {isShowroom ? "Komentar dari Showroom akan muncul di sini." : "Pesan dari chat IDN akan muncul di sini."}
-              </p>
-            </div>
-            {canRetry && (
-              <button onClick={retry} className="rounded-lg bg-white/10 px-3 py-1.5 text-xs text-white hover:bg-white/20 transition-colors">
-                Coba Lagi
-              </button>
-            )}
-          </div>
-        )}
-        {messages.map(msg => {
-          const accent = msg.colorCode || (isShowroom ? "#FF4F6D" : "#DC1F2E")
-          return (
-            <div key={msg.id} className="flex gap-2.5 items-start group">
-              <div
-                className="shrink-0 h-7 w-7 rounded-full overflow-hidden flex items-center justify-center ring-1"
-                style={{ backgroundColor: accent + "22", borderColor: accent + "55" }}
-              >
-                {msg.userAvatar ? (
-                  <img src={msg.userAvatar} alt={msg.userName} className="h-full w-full object-cover" />
-                ) : (
-                  <span className="text-[10px] font-bold" style={{ color: accent }}>{getInitials(msg.userName)}</span>
+      {chatOpen ? (
+        <div className="relative flex-1 min-h-0">
+          <div
+            ref={scrollRef}
+            onScroll={handleScroll}
+            className="h-full overflow-y-auto overscroll-contain px-3 py-3 space-y-3"
+          >
+            {visible.length === 0 && (
+              <div className="flex h-full min-h-[200px] flex-col items-center justify-center gap-3 py-6 text-center">
+                <div className="h-10 w-10 rounded-2xl bg-white/5 flex items-center justify-center">
+                  <svg className="h-5 w-5 text-white/20" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+                  </svg>
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-white/30">{statusText}</p>
+                  <p className="text-xs text-white/20 mt-0.5">
+                    {isShowroom ? "Komentar dari Showroom akan muncul di sini." : "Pesan dari chat IDN akan muncul di sini."}
+                  </p>
+                </div>
+                {canRetry && (
+                  <button onClick={retry} className="rounded-lg bg-white/10 px-3 py-1.5 text-xs text-white hover:bg-white/20 transition-colors">
+                    Coba Lagi
+                  </button>
                 )}
               </div>
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-1.5 flex-wrap mb-0.5">
-                  <span className="text-xs font-semibold leading-none truncate max-w-[120px]" style={{ color: accent }}>
-                    {msg.userName}
-                  </span>
-                  {msg.levelTier != null && (
-                    <span className="rounded px-1 py-0.5 text-[9px] font-bold text-white/40 bg-white/5">Lv{msg.levelTier}</span>
-                  )}
-                  <span className="text-[10px] text-white/20 ml-auto opacity-0 group-hover:opacity-100 transition-opacity">
-                    {formatHHMM(msg.timestamp)}
-                  </span>
+            )}
+            {visible.map(msg => {
+              const accent = msg.colorCode || (isShowroom ? "#FF4F6D" : "#DC1F2E")
+              return (
+                <div key={msg.id} className="flex gap-2.5 items-start group">
+                  <div
+                    className="shrink-0 h-7 w-7 rounded-full overflow-hidden flex items-center justify-center ring-1"
+                    style={{ backgroundColor: accent + "22", borderColor: accent + "55" }}
+                  >
+                    {msg.userAvatar ? (
+                      <img src={msg.userAvatar} alt={msg.userName} className="h-full w-full object-cover" loading="lazy" />
+                    ) : (
+                      <span className="text-[10px] font-bold" style={{ color: accent }}>{getInitials(msg.userName)}</span>
+                    )}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-1.5 flex-wrap mb-0.5">
+                      <span className="text-xs font-semibold leading-none truncate max-w-[120px]" style={{ color: accent }}>
+                        {msg.userName}
+                      </span>
+                      {msg.levelTier != null && (
+                        <span className="rounded px-1 py-0.5 text-[9px] font-bold text-white/40 bg-white/5">Lv{msg.levelTier}</span>
+                      )}
+                      <span className="text-[10px] text-white/20 ml-auto opacity-0 group-hover:opacity-100 transition-opacity">
+                        {formatHHMM(msg.timestamp)}
+                      </span>
+                    </div>
+                    <p className="text-xs leading-relaxed text-white/50 break-words">{msg.message}</p>
+                  </div>
                 </div>
-                <p className="text-xs leading-relaxed text-white/50 break-words">{msg.message}</p>
-              </div>
-            </div>
-          )
-        })}
-        <div ref={chatEndRef} />
-      </div>
+              )
+            })}
+          </div>
 
-      <div className="px-3 py-2.5 border-t border-white/10 shrink-0">
-        <p className="text-[10px] text-white/25 text-center">
+          {/* Floating "new messages" pill — only shown when scrolled up */}
+          {newCount > 0 && (
+            <button
+              onClick={() => scrollToBottom(true)}
+              className="absolute bottom-3 left-1/2 -translate-x-1/2 flex items-center gap-1.5 rounded-full bg-white text-black px-3 py-1.5 text-xs font-semibold shadow-lg hover:bg-white/90 transition-colors"
+            >
+              <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M19 14l-7 7m0 0l-7-7m7 7V3" />
+              </svg>
+              {newCount}{newCount >= 99 ? "+" : ""} pesan baru
+            </button>
+          )}
+        </div>
+      ) : (
+        <div className="flex flex-1 min-h-0 flex-col items-center justify-center gap-2 px-4 text-center">
+          <svg className="h-6 w-6 text-white/15" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3.98 8.223A10.477 10.477 0 001.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.45 10.45 0 0112 4.5c4.756 0 8.774 3.162 10.065 7.498a10.522 10.522 0 01-4.293 5.774M6.228 6.228L3 3m3.228 3.228l3.65 3.65m7.894 7.894L21 21m-3.228-3.228l-3.65-3.65m0 0a3 3 0 10-4.243-4.243m4.242 4.242L9.88 9.88" />
+          </svg>
+          <p className="text-xs text-white/30">Komentar disembunyikan</p>
+          <button
+            onClick={() => setChatOpen(true)}
+            className="rounded-lg bg-white/10 px-3 py-1.5 text-xs font-medium text-white hover:bg-white/20 transition-colors"
+          >
+            Tampilkan Komentar
+          </button>
+        </div>
+      )}
+
+      <div className="shrink-0 border-t border-white/10 px-3 py-2">
+        <p className="text-[10px] text-white/25 text-center truncate">
           {statusText}
           {isShowroom && srChat.lastPoll ? ` · update ${formatHHMM(srChat.lastPoll.getTime())}` : ""}
-          {" · "}{isShowroom ? "polling tiap 5 detik" : "chat hanya bisa dibaca"}
+          {" · "}{isShowroom ? "polling 5 detik" : "hanya bisa dibaca"}
         </p>
       </div>
     </div>
@@ -526,6 +614,9 @@ function LiveChatPanel({ show }: { show: LiveShow }) {
 }
 
 // ─── Player View ────────────────────────────────────────────────
+// Fixed-viewport app shell: the outer frame never scrolls (h-dvh +
+// overflow-hidden). Each panel owns its own internal scroll region,
+// so a fast-moving chat can never drag the whole page down with it.
 function PlayerView({ show }: { show: LiveShow }) {
   const [currentQuality, setCurrentQuality] = useState<StreamingUrl | null>(null)
   const roomKey = show.identifier || show.slug || show.url_key
@@ -534,10 +625,10 @@ function PlayerView({ show }: { show: LiveShow }) {
   const activeUrl = currentQuality?.url ?? show.streaming_url_list[0]?.url ?? null
 
   return (
-    <div className="min-h-screen bg-[#0a0a0a] text-white flex flex-col">
+    <div className="h-dvh w-full overflow-hidden bg-[#0a0a0a] text-white flex flex-col">
 
       {/* ── Header ── */}
-      <header className="flex items-center justify-between px-4 py-3 border-b border-white/10 shrink-0">
+      <header className="flex shrink-0 items-center justify-between px-4 py-3 border-b border-white/10">
         <div className="flex items-center gap-3 min-w-0">
           <img src={show.img_alt || show.img} alt={show.name} className="h-7 w-7 rounded-full object-cover shrink-0" />
           <div className="min-w-0">
@@ -547,7 +638,7 @@ function PlayerView({ show }: { show: LiveShow }) {
         </div>
         <div className="flex items-center gap-2 shrink-0">
           {viewerCount > 0 && (
-            <span className="flex items-center gap-1 rounded-full bg-white/10 px-2.5 py-1 text-xs font-medium text-white/70">
+            <span className="hidden sm:flex items-center gap-1 rounded-full bg-white/10 px-2.5 py-1 text-xs font-medium text-white/70">
               <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
@@ -563,10 +654,11 @@ function PlayerView({ show }: { show: LiveShow }) {
         </div>
       </header>
 
-      <div className="flex flex-1 flex-col lg:flex-row min-h-0">
-        <div className="flex flex-col flex-1 min-w-0">
+      {/* ── Body: video+info column | chat column ── */}
+      <div className="flex flex-1 min-h-0 flex-col lg:flex-row">
 
-          {/* ── Video player ── */}
+        {/* Video + info — its own scroll region, independent of chat */}
+        <div className="flex flex-col min-h-0 shrink-0 lg:flex-1 lg:min-w-0 overflow-y-auto">
           <div className="relative w-full bg-black shrink-0" style={{ aspectRatio: "16/9" }}>
             <img
               src={show.img}
@@ -592,34 +684,27 @@ function PlayerView({ show }: { show: LiveShow }) {
             )}
           </div>
 
-          {/* ── Info bar ── */}
-          <div className="px-4 py-4 space-y-3 border-b border-white/10">
-            <div className="flex items-start justify-between gap-3">
-              <div className="space-y-1.5 min-w-0">
-                <h1 className="text-base font-semibold leading-snug">{show.name}</h1>
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className="flex items-center gap-1 rounded-full bg-red-500/20 px-2.5 py-0.5 text-xs font-semibold text-red-400">
-                    <span className="h-1.5 w-1.5 rounded-full bg-red-500 animate-pulse" />LIVE
-                  </span>
-                  <span className="rounded-full bg-white/10 px-2.5 py-0.5 text-xs font-medium text-white/50 uppercase">{show.type}</span>
-                </div>
-              </div>
-              <img src={show.img_alt || show.img} alt={show.name} className="h-9 w-9 rounded-full object-cover ring-1 ring-white/20 shrink-0" />
-            </div>
-
+          {/* Compact info strip */}
+          <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-2 px-4 py-3 border-b border-white/10">
+            <h1 className="text-sm font-semibold leading-snug truncate max-w-full">{show.name}</h1>
+            <span className="flex items-center gap-1 rounded-full bg-red-500/20 px-2 py-0.5 text-[10px] font-semibold text-red-400 shrink-0">
+              <span className="h-1.5 w-1.5 rounded-full bg-red-500 animate-pulse" />LIVE
+            </span>
+            <span className="rounded-full bg-white/10 px-2 py-0.5 text-[10px] font-medium text-white/50 uppercase shrink-0">{show.type}</span>
             {show.started_at && (
-              <div className="flex items-center gap-2 text-xs text-white/50">
-                <svg className="h-3.5 w-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <span className="flex items-center gap-1 text-[11px] text-white/40 shrink-0 ml-auto">
+                <svg className="h-3 w-3 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
                 </svg>
-                Mulai {formatStartedAt(show.started_at)}
-              </div>
+                {formatStartedAt(show.started_at)}
+              </span>
             )}
           </div>
         </div>
 
-        {/* ── Chat panel ── */}
-        <div className="w-full lg:w-80 xl:w-96 border-t lg:border-t-0 lg:border-l border-white/10 flex flex-col shrink-0 lg:h-[calc(100vh-57px)] lg:sticky lg:top-[57px]">
+        {/* Chat column — flexes to fill remaining space on mobile,
+            fixed-width sidebar on large screens */}
+        <div className="flex flex-1 min-h-0 w-full flex-col border-t border-white/10 lg:w-80 lg:flex-none xl:w-96 lg:border-t-0 lg:border-l">
           <LiveChatPanel show={show} />
         </div>
       </div>

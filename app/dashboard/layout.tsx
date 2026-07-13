@@ -19,6 +19,8 @@ import {
   Loader2,
   ShoppingBag,
   MessageCircle,
+  Video,
+  Users,
 } from "lucide-react"
 import { ModeToggle } from "@/components/mode-toggle"
 import { useAuth } from "@/hooks/useAuth"
@@ -122,11 +124,13 @@ function useResolvedNavUrl(
 
 // ─── Nav items ────────────────────────────────────────────────
 const STATIC_NAV = [
-  { href: "/dashboard",            label: "Home",       icon: LayoutDashboard },
-  { href: "/dashboard/show",       label: "Jadwal",     icon: CalendarDays },
-  { href: "/dashboard/membership", label: "Membership", icon: CreditCard },
-  { href: "/dashboard/pm",         label: "PM",         icon: ShoppingBag },
-  { href: "/dashboard/chat",       label: "Chat",       icon: MessageCircle },
+  { href: "/dashboard",            label: "Home",        icon: LayoutDashboard },
+  { href: "/dashboard/show",       label: "Jadwal",      icon: CalendarDays },
+  { href: "/dashboard/membership", label: "Membership",  icon: CreditCard },
+  { href: "/dashboard/live",       label: "Live Member",  icon: Video },
+  { href: "/dashboard/member",     label: "Member",       icon: Users },
+  { href: "/dashboard/pm",         label: "PM",           icon: ShoppingBag },
+  { href: "/dashboard/chat",       label: "Chat",         icon: MessageCircle },
 ]
 
 // ─── Layout ───────────────────────────────────────────────────
@@ -144,7 +148,7 @@ export default function DashboardLayout({
   const [liveLoading,   setLiveLoading]   = useState(false)
   const [replayLoading, setReplayLoading] = useState(false)
 
-  // ── Live URL resolver ──────────────────────────────────────
+  // ── Live URL resolver (tombol "Live" dinamis di bawah, beda dengan "Live Member") ──
   const {
     url: liveUrl,
     resolving: liveResolving,
@@ -352,7 +356,7 @@ export default function DashboardLayout({
           <NavLink key={item.href} {...item} collapsed={collapsed} />
         ))}
 
-        {/* Live */}
+        {/* Live (dinamis: memb / tiket / show) */}
         <DynamicNavButton
           collapsed={collapsed}
           icon={Radio}

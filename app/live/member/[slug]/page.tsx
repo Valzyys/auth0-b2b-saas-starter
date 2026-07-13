@@ -949,6 +949,23 @@ function PlayerView({ show }: { show: LiveShow }) {
 }
 
 // ─── Main Page ────────────────────────────────────────────────
+// FIX SUMMARY (kenapa dulu error "Live tidak ditemukan" saat balik dari background):
+//
+// 1. Browser (terutama Chrome mobile) men-throttle atau bahkan menghentikan
+//    setInterval saat tab/app dipindah ke background. Jadi begitu user
+//    balik lagi, data yang ada sudah basi dan interval lama belum tentu
+//    langsung jalan lagi.
+// 2. Tidak ada refetch otomatis saat tab kembali visible — sekarang pakai
+//    `visibilitychange` supaya begitu balik ke app, langsung fetch ulang.
+// 3. BUG UTAMA: kalau fetch ke LIVE_API sukses tapi mengembalikan list yang
+//    kosong / show yang dicari belum ketemu (misal karena koneksi baru
+//    pulih dan API sempat kasih response tidak lengkap, tapi request-nya
+//    tidak throw error) — kode lama langsung men-set show ke `null` dan
+//    menampilkan layar "Live tidak ditemukan", padahal live-nya sendiri
+//    masih berjalan normal. Sekarang: kalau show sudah pernah berhasil
+//    dimuat, kegagalan sesaat TIDAK langsung meng-clear tampilan; kita
+//    coba lagi diam-diam di background. Baru dianggap benar-benar
+//    "not found" kalau gagal beberapa kali berturut-turut.
 export default function LiveSlugPage() {
   const params = useParams<{ slug: string }>()
   const slug = params?.slug ?? ""
@@ -957,32 +974,76 @@ export default function LiveSlugPage() {
   const [loading, setLoading] = useState(true)
   const [error,   setError]   = useState("")
 
-  const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const pollingRef   = useRef<ReturnType<typeof setInterval> | null>(null)
+  const missCountRef = useRef(0)          // berapa kali berturut-turut show tidak ketemu / fetch gagal
+  const hadShowRef   = useRef(false)      // pernah berhasil load show sebelumnya?
+  const slugRef      = useRef(slug)
+  const inFlightRef  = useRef(false)      // cegah request dobel (mis. visibilitychange + interval nyaris bareng)
 
-  const loadShow = useCallback(async () => {
+  const MAX_CONSECUTIVE_MISSES = 3        // baru dianggap "not found" setelah gagal 3x berturut-turut
+
+  useEffect(() => { slugRef.current = slug }, [slug])
+
+  const loadShow = useCallback(async (isInitial = false) => {
+    if (inFlightRef.current) return
+    inFlightRef.current = true
     try {
-      const res  = await fetch(LIVE_API)
+      const res  = await fetch(LIVE_API, { cache: "no-store" })
+      if (!res.ok) throw new Error(`status ${res.status}`)
       const data = await res.json()
       const list: LiveShow[] = Array.isArray(data) ? data : []
-      const found = list.find(s => s.slug === slug || s.url_key === slug)
+      const found = list.find(s => s.slug === slugRef.current || s.url_key === slugRef.current)
+
       if (found) {
+        missCountRef.current = 0
+        hadShowRef.current = true
         setShow(found)
         setError("")
       } else {
-        setShow(null)
-        setError("Live tidak ditemukan atau sudah berakhir.")
+        // Show tidak ditemukan di response ini. Jangan langsung panik kalau
+        // sebelumnya sudah pernah berhasil dimuat — bisa jadi cuma glitch
+        // sesaat (misalnya baru resume dari background, API belum "warm").
+        missCountRef.current += 1
+        if (!hadShowRef.current || missCountRef.current >= MAX_CONSECUTIVE_MISSES) {
+          setShow(null)
+          setError("Live tidak ditemukan atau sudah berakhir.")
+        }
+        // else: pertahankan `show` yang lama, biarkan retry berikutnya coba lagi.
       }
     } catch {
-      setError("Gagal memuat data live.")
+      // Fetch beneran gagal (network error dsb). Sama seperti di atas: kalau
+      // sudah pernah ada show yang valid, jangan langsung clear layar.
+      missCountRef.current += 1
+      if (!hadShowRef.current || missCountRef.current >= MAX_CONSECUTIVE_MISSES) {
+        if (!hadShowRef.current) setError("Gagal memuat data live.")
+      }
     } finally {
-      setLoading(false)
+      if (isInitial) setLoading(false)
+      inFlightRef.current = false
     }
-  }, [slug])
+  }, [])
 
   useEffect(() => {
-    loadShow()
-    pollingRef.current = setInterval(loadShow, 20000)
-    return () => { if (pollingRef.current) clearInterval(pollingRef.current) }
+    loadShow(true)
+
+    pollingRef.current = setInterval(() => loadShow(false), 20000)
+
+    // Refetch segera begitu tab/app kembali aktif — jangan andalkan
+    // setInterval saja karena browser mobile men-throttle timer di background.
+    const handleVisibility = () => {
+      if (document.visibilityState === "visible") {
+        loadShow(false)
+      }
+    }
+    document.addEventListener("visibilitychange", handleVisibility)
+    // Beberapa browser mobile juga fire "focus" saat app kembali ke foreground.
+    window.addEventListener("focus", handleVisibility)
+
+    return () => {
+      if (pollingRef.current) clearInterval(pollingRef.current)
+      document.removeEventListener("visibilitychange", handleVisibility)
+      window.removeEventListener("focus", handleVisibility)
+    }
   }, [loadShow])
 
   if (loading) {
@@ -1007,7 +1068,10 @@ export default function LiveSlugPage() {
           </div>
           <p className="font-semibold text-white">Live Tidak Ditemukan</p>
           <p className="text-sm text-white/40">{error || "Slug tidak valid."}</p>
-          <button onClick={loadShow} className="w-full rounded-xl bg-white/10 py-2.5 text-sm font-medium text-white hover:bg-white/15 transition-colors">
+          <button
+            onClick={() => { setLoading(true); missCountRef.current = 0; loadShow(true) }}
+            className="w-full rounded-xl bg-white/10 py-2.5 text-sm font-medium text-white hover:bg-white/15 transition-colors"
+          >
             Coba Lagi
           </button>
         </div>

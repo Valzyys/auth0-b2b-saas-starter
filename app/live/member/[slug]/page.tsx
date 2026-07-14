@@ -348,7 +348,7 @@ function useShowroomCommentsReadOnly(roomId: number | null) {
   const fetchComments = useCallback(async () => {
     if (!roomId || !mountedRef.current) return
     try {
-      const res = await fetch(`https://www.showroom-live.com/api/live/comment_log?room_id=${roomId}`, {
+      const res = await fetch(`https://src.jkt48connect.com/?room_id=${roomId}`, {
         headers: { Accept: "application/json" },
       })
       if (!res.ok) throw new Error(`status ${res.status}`)

@@ -562,6 +562,7 @@ function useCountdown(targetTs: number | null) {
 }
 
 // ─── YouTube Custom Player (no native controls, no click-through) ─────
+// ─── YouTube Custom Player (no native controls, no click-through) ─────
 function YoutubeCustomPlayer({
   videoId,
   className,
@@ -569,34 +570,59 @@ function YoutubeCustomPlayer({
   videoId: string
   className?: string
 }) {
-  const iframeRef   = useRef<HTMLIFrameElement>(null)
-  const containerRef = useRef<HTMLDivElement>(null)
+  const iframeRef     = useRef<HTMLIFrameElement>(null)
+  const containerRef  = useRef<HTMLDivElement>(null)
   const [playing, setPlaying]   = useState(true)
-  const [muted, setMuted]       = useState(true) // autoplay butuh muted
+  const [muted, setMuted]       = useState(true)
   const [ready, setReady]       = useState(false)
   const [showControls, setShowControls] = useState(true)
   const hideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const listenRetryRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   const postCmd = useCallback((func: string, args: any[] = []) => {
     iframeRef.current?.contentWindow?.postMessage(
-      JSON.stringify({ event: "command", func, args }),
+      JSON.stringify({ event: "command", func, args, id: videoId }),
       "*"
     )
-  }, [])
+  }, [videoId])
+
+  // ── Handshake wajib: YT API baru mulai kirim event setelah menerima "listening" ──
+  const sendListening = useCallback(() => {
+    iframeRef.current?.contentWindow?.postMessage(
+      JSON.stringify({ event: "listening", id: videoId }),
+      "*"
+    )
+  }, [videoId])
 
   useEffect(() => {
     const onMessage = (e: MessageEvent) => {
       if (typeof e.data !== "string") return
+      if (!e.origin.includes("youtube.com")) return
       try {
         const data = JSON.parse(e.data)
-        if (data.event === "onReady" || data.event === "onStateChange") {
+        if (data.event === "onReady" || data.event === "initialDelivery" || data.info) {
           setReady(true)
+          if (listenRetryRef.current) {
+            clearInterval(listenRetryRef.current)
+            listenRetryRef.current = null
+          }
         }
       } catch {}
     }
     window.addEventListener("message", onMessage)
-    return () => window.removeEventListener("message", onMessage)
-  }, [])
+
+    // Kirim handshake berulang sampai iframe merespons (iframe kadang belum
+    // siap menerima postMessage tepat saat pertama kali di-mount)
+    listenRetryRef.current = setInterval(sendListening, 300)
+    // Fallback: kalau setelah 4 detik tetap belum ada respon, paksa hilangkan spinner
+    const fallback = setTimeout(() => setReady(true), 4000)
+
+    return () => {
+      window.removeEventListener("message", onMessage)
+      if (listenRetryRef.current) clearInterval(listenRetryRef.current)
+      clearTimeout(fallback)
+    }
+  }, [sendListening])
 
   const resetHideTimer = useCallback(() => {
     setShowControls(true)
@@ -628,31 +654,34 @@ function YoutubeCustomPlayer({
     else document.exitFullscreen?.()
   }
 
+  const origin = typeof window !== "undefined" ? window.location.origin : ""
+
   const embedSrc =
     `https://www.youtube.com/embed/${videoId}` +
     `?autoplay=1&mute=1&controls=0&disablekb=1&modestbranding=1` +
     `&rel=0&showinfo=0&iv_load_policy=3&fs=0&playsinline=1` +
-    `&enablejsapi=1&origin=${typeof window !== "undefined" ? window.location.origin : ""}`
+    `&enablejsapi=1&origin=${encodeURIComponent(origin)}`
 
   return (
     <div
       ref={containerRef}
       className={`relative overflow-hidden ${className ?? ""}`}
       onMouseMove={resetHideTimer}
-      onClick={resetHideTimer}
     >
-      {/* iframe YT (tanpa branding/kontrol native) */}
+      {/* iframe YT — pointer-events-none PERMANEN, jadi tidak pernah bisa diklik langsung */}
       <iframe
         ref={iframeRef}
         src={embedSrc}
         className="absolute inset-0 h-full w-full pointer-events-none"
+        style={{ border: 0 }}
         allow="autoplay; encrypted-media"
-        allowFullScreen={false}
+        onLoad={sendListening}
       />
 
-      {/* Overlay full-size: blok klik langsung ke YT / redirect ke channel */}
+      {/* Overlay full-size — dipasang dari awal (tidak menunggu "ready") agar
+          tidak ada celah waktu di mana kontrol YT sempat ke-klik */}
       <div
-        className="absolute inset-0 z-10 bg-transparent"
+        className="absolute inset-0 z-10 bg-transparent cursor-pointer"
         onClick={togglePlay}
       />
 
@@ -701,7 +730,7 @@ function YoutubeCustomPlayer({
       </div>
 
       {!ready && (
-        <div className="absolute inset-0 z-30 flex items-center justify-center bg-black/80">
+        <div className="absolute inset-0 z-30 flex items-center justify-center bg-black/80 pointer-events-none">
           <div className="h-8 w-8 animate-spin rounded-full border-2 border-white/20 border-t-white" />
         </div>
       )}

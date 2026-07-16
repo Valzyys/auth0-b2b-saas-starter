@@ -561,6 +561,154 @@ function useCountdown(targetTs: number | null) {
   return { diff, h: Math.floor(diff / 3600), m: Math.floor((diff % 3600) / 60), s: diff % 60 }
 }
 
+// ─── YouTube Custom Player (no native controls, no click-through) ─────
+function YoutubeCustomPlayer({
+  videoId,
+  className,
+}: {
+  videoId: string
+  className?: string
+}) {
+  const iframeRef   = useRef<HTMLIFrameElement>(null)
+  const containerRef = useRef<HTMLDivElement>(null)
+  const [playing, setPlaying]   = useState(true)
+  const [muted, setMuted]       = useState(true) // autoplay butuh muted
+  const [ready, setReady]       = useState(false)
+  const [showControls, setShowControls] = useState(true)
+  const hideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const postCmd = useCallback((func: string, args: any[] = []) => {
+    iframeRef.current?.contentWindow?.postMessage(
+      JSON.stringify({ event: "command", func, args }),
+      "*"
+    )
+  }, [])
+
+  useEffect(() => {
+    const onMessage = (e: MessageEvent) => {
+      if (typeof e.data !== "string") return
+      try {
+        const data = JSON.parse(e.data)
+        if (data.event === "onReady" || data.event === "onStateChange") {
+          setReady(true)
+        }
+      } catch {}
+    }
+    window.addEventListener("message", onMessage)
+    return () => window.removeEventListener("message", onMessage)
+  }, [])
+
+  const resetHideTimer = useCallback(() => {
+    setShowControls(true)
+    if (hideTimerRef.current) clearTimeout(hideTimerRef.current)
+    hideTimerRef.current = setTimeout(() => setShowControls(false), 2500)
+  }, [])
+
+  useEffect(() => {
+    resetHideTimer()
+    return () => { if (hideTimerRef.current) clearTimeout(hideTimerRef.current) }
+  }, [resetHideTimer])
+
+  const togglePlay = () => {
+    if (playing) postCmd("pauseVideo")
+    else postCmd("playVideo")
+    setPlaying(p => !p)
+  }
+
+  const toggleMute = () => {
+    if (muted) postCmd("unMute")
+    else postCmd("mute")
+    setMuted(m => !m)
+  }
+
+  const toggleFullscreen = () => {
+    const el = containerRef.current
+    if (!el) return
+    if (!document.fullscreenElement) el.requestFullscreen?.()
+    else document.exitFullscreen?.()
+  }
+
+  const embedSrc =
+    `https://www.youtube.com/embed/${videoId}` +
+    `?autoplay=1&mute=1&controls=0&disablekb=1&modestbranding=1` +
+    `&rel=0&showinfo=0&iv_load_policy=3&fs=0&playsinline=1` +
+    `&enablejsapi=1&origin=${typeof window !== "undefined" ? window.location.origin : ""}`
+
+  return (
+    <div
+      ref={containerRef}
+      className={`relative overflow-hidden ${className ?? ""}`}
+      onMouseMove={resetHideTimer}
+      onClick={resetHideTimer}
+    >
+      {/* iframe YT (tanpa branding/kontrol native) */}
+      <iframe
+        ref={iframeRef}
+        src={embedSrc}
+        className="absolute inset-0 h-full w-full pointer-events-none"
+        allow="autoplay; encrypted-media"
+        allowFullScreen={false}
+      />
+
+      {/* Overlay full-size: blok klik langsung ke YT / redirect ke channel */}
+      <div
+        className="absolute inset-0 z-10 bg-transparent"
+        onClick={togglePlay}
+      />
+
+      {/* Custom control bar */}
+      <div
+        className={`absolute inset-x-0 bottom-0 z-20 flex items-center gap-3 bg-gradient-to-t from-black/80 to-transparent px-4 py-3 transition-opacity duration-300 ${
+          showControls ? "opacity-100" : "opacity-0 pointer-events-none"
+        }`}
+      >
+        <button
+          onClick={(e) => { e.stopPropagation(); togglePlay() }}
+          className="flex h-8 w-8 items-center justify-center rounded-full bg-white/10 hover:bg-white/20 transition-colors"
+        >
+          {playing ? (
+            <svg className="h-4 w-4 text-white" fill="currentColor" viewBox="0 0 24 24"><path d="M6 4h4v16H6zM14 4h4v16h-4z" /></svg>
+          ) : (
+            <svg className="h-4 w-4 text-white" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z" /></svg>
+          )}
+        </button>
+
+        <button
+          onClick={(e) => { e.stopPropagation(); toggleMute() }}
+          className="flex h-8 w-8 items-center justify-center rounded-full bg-white/10 hover:bg-white/20 transition-colors"
+        >
+          {muted ? (
+            <svg className="h-4 w-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M17 14l2 2m0 0l2 2m-2-2l2-2m-2 2l-2 2M9 9v6a1 1 0 001 1h2l4 4V4l-4 4H10a1 1 0 00-1 1z" />
+            </svg>
+          ) : (
+            <svg className="h-4 w-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M15.536 8.464a5 5 0 010 7.072M18.364 5.636a9 9 0 010 12.728M9 9v6a1 1 0 001 1h2l4 4V4l-4 4H10a1 1 0 00-1 1z" />
+            </svg>
+          )}
+        </button>
+
+        <span className="text-[10px] font-medium text-white/50 flex-1">Live</span>
+
+        <button
+          onClick={(e) => { e.stopPropagation(); toggleFullscreen() }}
+          className="flex h-8 w-8 items-center justify-center rounded-full bg-white/10 hover:bg-white/20 transition-colors"
+        >
+          <svg className="h-4 w-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M4 8V4h4M4 4l5 5M20 8V4h-4m4 0l-5 5M4 16v4h4m-4 0l5-5m11 5v-4m0 4h-4m4 0l-5-5" />
+          </svg>
+        </button>
+      </div>
+
+      {!ready && (
+        <div className="absolute inset-0 z-30 flex items-center justify-center bg-black/80">
+          <div className="h-8 w-8 animate-spin rounded-full border-2 border-white/20 border-t-white" />
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ─── HLS Player ───────────────────────────────────────────────
 function HlsPlayer({
   src, className, token,
@@ -1728,12 +1876,14 @@ const loadIdn2Stream = useCallback(async () => {
               </div>
             )}
 
-            {/* YouTube server */}
-            {isLive && activeServer === "youtube" && youtubeUrl && (
-              <iframe src={youtubeUrl} className="absolute inset-0 h-full w-full"
-                allow="autoplay; encrypted-media; fullscreen" allowFullScreen />
+          {/* YouTube server (custom overlay, no native controls/click-through) */}
+            {isLive && activeServer === "youtube" && streamData?.youtube?.video_id && (
+              <YoutubeCustomPlayer
+                videoId={streamData.youtube.video_id}
+                className="absolute inset-0 h-full w-full bg-black"
+              />
             )}
-            {isLive && activeServer === "youtube" && !youtubeUrl && (
+            {isLive && activeServer === "youtube" && !streamData?.youtube?.video_id && (
               <div className="absolute inset-0 flex items-center justify-center bg-black/70">
                 <p className="text-sm text-white/40">Stream YouTube tidak tersedia</p>
               </div>

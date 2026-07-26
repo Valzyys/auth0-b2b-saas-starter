@@ -2042,7 +2042,7 @@ export default function LiveTokenPage() {
     setAccessEmail(undefined); setAccessMode("token"); setVerifyState("email_form")
   }, [show])
 
-  const runVerification = useCallback(async () => {
+const runVerification = useCallback(async () => {
     setVerifyState("checking"); consumedRef.current = false
 
     const cachedEmail = readCachedEmailAccess(null)
@@ -2069,10 +2069,49 @@ export default function LiveTokenPage() {
       setVerifyState("email_form"); return
     }
 
+    // ── FIX: cached access tidak lagi langsung di-trust.
+    // Selalu reverify ke server dulu — kalau token sudah dinonaktifkan,
+    // expired, atau kena max-uses SETELAH consumedAt tersimpan, cache
+    // lokal dihapus dan akses ditolak.
     const cached = readCachedAccess(liveId)
     if (cached) {
+      const freshInfo = await fetchTokenInfo()
+      if (!freshInfo) {
+        // token sudah dihapus dari sistem sama sekali
+        localStorage.removeItem(`${LS_PREFIX}${liveId}`)
+        setErrorMsg("Token tidak ditemukan"); setVerifyState("denied"); return
+      }
+      setTokenInfo(freshInfo)
+
+      const stillValid =
+        freshInfo.is_active &&
+        !freshInfo.is_expired &&
+        !isTokenMaxed(freshInfo)
+
+      if (!stillValid) {
+        localStorage.removeItem(`${LS_PREFIX}${liveId}`)
+        setErrorMsg(
+          !freshInfo.is_active
+            ? "Token dinonaktifkan admin"
+            : freshInfo.is_expired
+            ? "Token sudah expired"
+            : `Token sudah mencapai batas penggunaan (${parseTokenInt(freshInfo.max_uses)}x)`
+        )
+        setVerifyState("denied")
+        return
+      }
+
+      // valid → tapi tetap cek juga expiresAt di cache lokal (jaga-jaga
+      // kalau expires_at di server berubah lebih longgar dari cache lama)
+      if (cached.expiresAt && Date.now() > cached.expiresAt) {
+        localStorage.removeItem(`${LS_PREFIX}${liveId}`)
+        setErrorMsg("Akses token sudah kadaluarsa")
+        setVerifyState("denied")
+        return
+      }
+
       setAccessMode("token"); setVerifyState("granted")
-      const s = await findShow(cached.showId)
+      const s = await findShow(cached.showId ?? freshInfo.show_id)
       if (s) { setShow(s); fetchStream(s.showId) }
       return
     }

@@ -1,6 +1,6 @@
 import Cookies from "js-cookie"
 
-const API_BASE = "https://v5.jkt48connect.com/api/team48"
+const API_BASE = "https://v3.jkt48connect.com/api/team48"
 const API_KEY = "JKTCONNECT"
 
 export function getAccessToken() {

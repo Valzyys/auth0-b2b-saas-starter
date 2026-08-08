@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { SubmitButton } from "@/components/submit-button"
 
-const API_BASE = "https://v5.jkt48connect.com/api/team48"
+const API_BASE = "https://v3.jkt48connect.com/api/team48"
 const API_KEY  = "JKTCONNECT"
 
 export function ForgotPasswordForm() {

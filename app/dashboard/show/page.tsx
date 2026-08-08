@@ -3,7 +3,7 @@
 import { useEffect, useState, useRef, useCallback } from "react"
 
 // ─── API Constants ─────────────────────────────────────────
-const API_BASE = "https://v5.jkt48connect.com/api/team48"
+const API_BASE = "https://v3.jkt48connect.com/api/team48"
 const API_KEY  = "JKTCONNECT"
 const POLL_MS  = 4000
 const TOKEN_TTL_HOURS = 360 // 15 hari

@@ -4,7 +4,7 @@ import { useEffect, useState, useRef, useCallback } from "react"
 import { useParams } from "next/navigation"
 
 // ─── Constants ────────────────────────────────────────────────
-const API_BASE  = "https://v5.jkt48connect.com/api/team48"
+const API_BASE  = "https://v3.jkt48connect.com/api/team48"
 const API_KEY   = "JKTCONNECT"
 const LS_PREFIX = "t48_replay_access_"
 

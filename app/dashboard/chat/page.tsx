@@ -3,7 +3,7 @@
 import { useEffect, useState, useRef, useCallback } from "react"
 
 // ─── API Constants ─────────────────────────────────────────
-const API_BASE = "https://v5.jkt48connect.com/api/team48"
+const API_BASE = "https://v3.jkt48connect.com/api/team48"
 const API_KEY  = "JKTCONNECT"
 const IMAGE_PROXY_BASE = "https://pay.jkt48connect.com/api/proxy-image"
 

@@ -4,7 +4,7 @@ import { useEffect, useState, useRef, useCallback, useMemo } from "react"
 import Link from "next/link"
 
 // ─── Constants ───────────────────────────────────────────────
-const LIVE_API   = "https://v5.jkt48connect.com/api/jkt48/live?apikey=JKTCONNECT"
+const LIVE_API   = "https://v3.jkt48connect.com/api/jkt48/live?apikey=JKTCONNECT"
 const POLL_MS    = 15000
 
 // ─── Types ───────────────────────────────────────────────────

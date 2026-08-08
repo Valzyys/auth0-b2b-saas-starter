@@ -5,7 +5,7 @@ import { useParams } from "next/navigation"
 import { createClient } from "@supabase/supabase-js"
 
 // ─── Constants ───────────────────────────────────────────────
-const LIVE_API = "https://v5.jkt48connect.com/api/jkt48/live?apikey=JKTCONNECT"
+const LIVE_API = "https://v3.jkt48connect.com/api/jkt48/live?apikey=JKTCONNECT"
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || "https://mzxfuaoihgzxvokwarao.supabase.co"
 const SUPABASE_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im16eGZ1YW9paGd6eHZva3dhcmFvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ0MDg0NjIsImV4cCI6MjA4OTk4NDQ2Mn0.OFYCkBFXCSfLn-wG94OHHKL5CX8T_BLrbDGPiBdPIog"

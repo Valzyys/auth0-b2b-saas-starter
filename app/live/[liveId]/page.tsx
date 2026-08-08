@@ -5,8 +5,8 @@ import { useParams } from "next/navigation"
 import { createClient } from "@supabase/supabase-js"
 
 // ─── Constants ───────────────────────────────────────────────
-const API_BASE  = "https://v5.jkt48connect.com/api/team48"
-const IDN_API   = "https://v5.jkt48connect.com/api/jkt48/idnplus?apikey=JKTCONNECT"
+const API_BASE  = "https://v3.jkt48connect.com/api/team48"
+const IDN_API   = "https://v3.jkt48connect.com/api/jkt48/idnplus?apikey=JKTCONNECT"
 const API_KEY   = "JKTCONNECT"
 const LS_PREFIX = "t48_live_access_"
 

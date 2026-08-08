@@ -3,12 +3,12 @@
 import { useEffect, useState, useCallback, useMemo } from "react"
 
 // ─── API Constants ─────────────────────────────────────────
-const MEMBERS_API = "https://v5.jkt48connect.com/api/jkt48/members"
+const MEMBERS_API = "https://v3.jkt48connect.com/api/jkt48/members"
 const API_KEY      = "JKTCONNECT"
 
 // ─── Types ─────────────────────────────────────────────────
 
-interface SocialLink {
+interface SocialLink 
   title: string
   url:   string
 }

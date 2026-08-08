@@ -3,7 +3,7 @@
 import { useAuth, fetchWithAuth } from "@/hooks/useAuth"
 import { useEffect, useState, useCallback } from "react"
 
-const API_BASE = "https://v5.jkt48connect.com/api/team48"
+const API_BASE = "https://v3.jkt48connect.com/api/team48"
 const API_KEY = "JKTCONNECT"
 
 // ── Types ─────────────────────────────────────────────────────

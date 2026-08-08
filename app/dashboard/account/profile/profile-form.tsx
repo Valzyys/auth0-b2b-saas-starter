@@ -16,7 +16,7 @@ import { Button } from "@/components/ui/button"
 import { fetchWithAuth, getCookie, setCookie } from "@/hooks/useAuth"
 import { User } from "@/hooks/useAuth"
 
-const API_BASE = "https://v5.jkt48connect.com/api/team48"
+const API_BASE = "https://v3.jkt48connect.com/api/team48"
 const API_KEY = "JKTCONNECT"
 
 interface Props {

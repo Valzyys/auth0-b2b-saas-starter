@@ -19,7 +19,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY)
 
 // ─── Harukaze Partner (session-based IDN stream) ───────────────
 const PARTNER_SIGNER_BASE = process.env.NEXT_PUBLIC_PARTNER_SIGNER_BASE || "https://lv.team48live.my.id"
-const PARTNER_ORIGIN      = process.env.NEXT_PUBLIC_PARTNER_ORIGIN || "https://stream.team48live.my.id"
+const PARTNER_ORIGIN      = process.env.NEXT_PUBLIC_PARTNER_ORIGIN || "https://lv.team48live.my.id"
 
 const PARTNER_ERROR_MESSAGES: Record<string, string> = {
   BAD_REQUEST: "Permintaan tidak lengkap atau formatnya salah.",
@@ -255,28 +255,19 @@ async function resumePartnerSession(): Promise<any> {
   return res.json() // { ok, resumed, counted, playlist_url, play_header_name, play_header_value }
 }
 
-// ─── Load IDN stream via Harukaze partner session (slug first, fallback showId) ──
-async function loadHarukazeIdnStream(slug: string | null, showId: string | null, viewerId: string | null): Promise<PartnerStreamData> {
-  const candidates = [slug, showId].filter((v): v is string => !!v)
-  if (!candidates.length) throw new Error("Slug/Show ID tidak tersedia")
+// ─── Load IDN stream via Harukaze partner session (berdasarkan slug saja) ──
+async function loadHarukazeIdnStream(slug: string | null, viewerId: string | null): Promise<PartnerStreamData> {
+  if (!slug) throw new Error("Slug show tidak tersedia")
 
-  let lastErr: unknown = null
-  for (const candidate of candidates) {
-    try {
-      const sessionData = await createPartnerSession(candidate, viewerId)
-      const playback    = await exchangePlaybackUrl(sessionData.playback_url)
-      return {
-        playlistUrl:     playback.playlist_url,
-        playHeaderName:  playback.play_header_name || "X-Play-Key",
-        playHeaderValue: playback.play_header_value || "",
-        maxResolution:   playback.max_resolution || sessionData.max_resolution || null,
-        sessionId:       sessionData.session_id || null,
-      }
-    } catch (e) {
-      lastErr = e
-    }
+  const sessionData = await createPartnerSession(slug, viewerId)
+  const playback    = await exchangePlaybackUrl(sessionData.playback_url)
+  return {
+    playlistUrl:     playback.playlist_url,
+    playHeaderName:  playback.play_header_name || "X-Play-Key",
+    playHeaderValue: playback.play_header_value || "",
+    maxResolution:   playback.max_resolution || sessionData.max_resolution || null,
+    sessionId:       sessionData.session_id || null,
   }
-  throw lastErr instanceof Error ? lastErr : new Error("Gagal memuat stream IDN")
 }
 
 // ─── Theater lineup helper ──────────────────────────────────────
@@ -1417,14 +1408,14 @@ function PlayerView({
     setIdnLoading(true)
     setIdnError("")
     try {
-      const data = await loadHarukazeIdnStream(show.slug, show.showId, user?.user_id ?? null)
+      const data = await loadHarukazeIdnStream(show.slug, user?.user_id ?? null)
       setIdnStreamData(data)
     } catch (e: any) {
       setIdnError(e?.message || "Gagal memuat stream IDN")
     } finally {
       setIdnLoading(false)
     }
-  }, [show.slug, show.showId, user?.user_id])
+  }, [show.slug, user?.user_id])
 
   // ── Resume session (dipanggil saat player butuh sesi baru: 401/403, atau refresh halaman) ──
   const handleIdnResume = useCallback(async () => {

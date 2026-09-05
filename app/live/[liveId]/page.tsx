@@ -243,25 +243,15 @@ async function createPartnerSession(showSlug: string, viewerId: string | null): 
   return data // { playback_url, session_id, quota, max_resolution, ... }
 }
 
-// exchangePlaybackUrl sekarang lewat proxy Worker (PARTNER_SIGNER_BASE/exchange-playback)
-// karena jkt48connect.com menolak request cross-origin langsung dari browser (CORS error).
-// Worker akan fetch playback_url itu server-to-server dan meneruskan hasilnya.
 async function exchangePlaybackUrl(playbackUrl: string): Promise<any> {
-  const res = await fetch(`${PARTNER_SIGNER_BASE}/exchange-playback`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    credentials: "include",
-    body: JSON.stringify({ playbackUrl }),
-  })
+  const res = await fetch(playbackUrl, { credentials: "include" })
   const data = await res.json()
   if (!data.ok) throw new Error(partnerErrMsg(data.code, data.message))
   return data // { playlist_url, play_header_name, play_header_value, max_resolution, expires_at }
 }
 
-// resumePartnerSession sekarang juga lewat proxy Worker (PARTNER_SIGNER_BASE/resume)
-// dengan alasan yang sama seperti exchangePlaybackUrl di atas.
 async function resumePartnerSession(): Promise<any> {
-  const res = await fetch(`${PARTNER_SIGNER_BASE}/resume`, { credentials: "include" })
+  const res = await fetch(`${PARTNER_ORIGIN}/api/partner/resume`, { credentials: "include" })
   return res.json() // { ok, resumed, counted, playlist_url, play_header_name, play_header_value }
 }
 

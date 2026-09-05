@@ -5,8 +5,8 @@ import { useParams } from "next/navigation"
 import { createClient } from "@supabase/supabase-js"
 
 // ─── Constants ───────────────────────────────────────────────
-const API_BASE  = "https://v3.jkt48connect.com/api/team48"
-const IDN_API   = "https://v3.jkt48connect.com/api/jkt48/idnplus?apikey=JKTCONNECT"
+const API_BASE  = "https://v5.jkt48connect.com/api/team48"
+const IDN_API   = "https://v5.jkt48connect.com/api/jkt48/idnplus?apikey=JKTCONNECT"
 const API_KEY   = "JKTCONNECT"
 const LS_PREFIX = "t48_live_access_"
 
@@ -17,15 +17,29 @@ const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || "https://mzxfuaoihg
 const SUPABASE_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im16eGZ1YW9paGd6eHZva3dhcmFvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ0MDg0NjIsImV4cCI6MjA4OTk4NDQ2Mn0.OFYCkBFXCSfLn-wG94OHHKL5CX8T_BLrbDGPiBdPIog"
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY)
 
-// ─── GiStream / CTV constants ─────────────────────────────────
-const PARTNER_KID    = "jkt48connect-v1"
-const PARTNER_SECRET = "gstream@jkt48connect@2108"
-const TOKEN_API_BASE = "https://v5.jkt48connect.com"
-const CTV_BASE       = "https://ctv.jkt48connect.com"
-const SIGNING_PATH   = "/api/token/generate?apikey=JKTCONNECT"
+// ─── Harukaze Partner (session-based IDN stream) ───────────────
+const PARTNER_SIGNER_BASE = process.env.NEXT_PUBLIC_PARTNER_SIGNER_BASE || "https://lv.team48live.my.id"
+const PARTNER_ORIGIN      = process.env.NEXT_PUBLIC_PARTNER_ORIGIN || "https://stream.team48live.my.id"
 
-// ─── v1 stream base (IDN2) ────────────────────────────────────
-const V1_STREAM_BASE = "https://v1.jkt48connect.com"
+const PARTNER_ERROR_MESSAGES: Record<string, string> = {
+  BAD_REQUEST: "Permintaan tidak lengkap atau formatnya salah.",
+  SHOW_NOT_PURCHASED: "Show ini belum dibeli untuk akun kamu.",
+  STALE_REQUEST: "Waktu server tidak sinkron, coba lagi.",
+  REPLAY_DETECTED: "Permintaan ganda terdeteksi, coba lagi.",
+  KEY_NOT_FOUND: "Kredensial partner tidak dikenali.",
+  VIEW_QUOTA_EXCEEDED: "Kuota penonton sudah habis. Coba lagi nanti.",
+  SIGNATURE_REJECTED: "Permintaan tidak sah atau kedaluwarsa, coba lagi.",
+  ORIGIN_NOT_ALLOWED: "Domain ini belum terdaftar untuk mengakses stream.",
+  SESSION_BINDING_MISMATCH: "Sesi ini sedang dipakai di perangkat lain.",
+  PLAY_HEADER_REQUIRED: "Header pemutaran tidak terkirim.",
+  PLAY_HEADER_INVALID: "Sesi pemutaran kedaluwarsa, menyegarkan ulang...",
+  VARIANT_NOT_ALLOWED: "Resolusi ini tidak tersedia untuk paket kamu.",
+  KEY_LOCKED: "Akses partner sedang dibekukan.",
+  PARTNER_SUSPENDED: "Layanan streaming sedang tidak tersedia sementara.",
+}
+function partnerErrMsg(code?: string, fallback?: string): string {
+  return (code && PARTNER_ERROR_MESSAGES[code]) || fallback || "Terjadi kesalahan saat memuat stream."
+}
 
 // ─── Theater lineup constants ──────────────────────────────────
 const THEATER_API_BASE = "https://v5.jkt48connect.com/api/jkt48/theater"
@@ -113,40 +127,15 @@ interface CachedEmailAccess {
 }
 
 // ─── Server / source types ────────────────────────────────────
-type ServerType = "idn" | "idn2" | "rtmp" | "youtube"
+type ServerType = "idn" | "rtmp" | "youtube"
 
-interface IdnStreamData {
-  url:       string
-  token:     string
-  qualities: IdnQuality[]
-}
-
-interface IdnQuality {
-  index:           number
-  name:            string
-  quality:         string
-  bandwidth:       number
-  bandwidth_label: string
-  resolution:      string
-  fps:             string
-  manual_url:      string
-}
-
-// ─── IDN2 (v1) stream data ────────────────────────────────────
-interface Idn2Quality {
-  index:           number
-  name:            string
-  bandwidth:       number
-  bandwidth_label: string
-  resolution:      string
-  fps:             string
-  url:             string
-}
-
-interface Idn2StreamData {
-  url:       string   // best/auto URL (first in list)
-  token:     string
-  qualities: Idn2Quality[]
+// ─── Harukaze partner session stream data (replaces GiStream) ──
+interface PartnerStreamData {
+  playlistUrl:     string
+  playHeaderName:  string
+  playHeaderValue: string
+  maxResolution:   number | string | null
+  sessionId:       string | null
 }
 
 // ─── Chat types ──────────────────────────────────────────────
@@ -242,153 +231,52 @@ type VerifyState =
   | "email_denied"
   | "error"
 
-// ─── GiStream HMAC helpers ────────────────────────────────────
-async function sha256Hex(str: string): Promise<string> {
-  const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(str))
-  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, "0")).join("")
-}
-
-async function hmacSHA256Hex(secret: string, message: string): Promise<string> {
-  const key = await crypto.subtle.importKey(
-    "raw", new TextEncoder().encode(secret),
-    { name: "HMAC", hash: "SHA-256" }, false, ["sign"]
-  )
-  const buf = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(message))
-  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, "0")).join("")
-}
-
-async function buildHMACHeaders(): Promise<Record<string, string>> {
-  const timestamp  = Date.now().toString()
-  const nonce      = crypto.randomUUID().replace(/-/g, "")
-  const bodyHash   = await sha256Hex("{}")
-  const signingStr = `${timestamp}:${nonce}:POST:${SIGNING_PATH}:${bodyHash}`
-  const signature  = await hmacSHA256Hex(PARTNER_SECRET, signingStr)
-  return {
-    "x-kid":       PARTNER_KID,
-    "x-timestamp": timestamp,
-    "x-nonce":     nonce,
-    "x-signature": signature,
-  }
-}
-
-function isDevAccount(name?: string): boolean {
-  return (name || "").trim().toLowerCase() === "valzy nathaniel"
-}
-
-async function generateGiStreamToken(slugOrId: string, isSlug: boolean): Promise<string> {
-  const hmacHeaders = await buildHMACHeaders()
-  const res = await fetch(`${TOKEN_API_BASE}${SIGNING_PATH}`, {
+// ─── Harukaze partner session helpers ─────────────────────────
+async function createPartnerSession(showSlug: string, viewerId: string | null): Promise<any> {
+  const res = await fetch(`${PARTNER_SIGNER_BASE}/session`, {
     method: "POST",
-    headers: {
-      ...hmacHeaders,
-      ...(isSlug ? { "x-slug": slugOrId } : { "x-showid": slugOrId }),
-      "Content-Type": "application/json",
-    },
-    body: "{}",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ show_slug: showSlug, viewer_id: viewerId, ttl: 120 }),
   })
   const data = await res.json()
-  if (!data.status) throw new Error("Generate token gagal: " + data.message)
-  return data.data.token
+  if (!data.ok) throw new Error(partnerErrMsg(data.code, data.message))
+  return data // { playback_url, session_id, quota, max_resolution, ... }
 }
 
-async function getIdnStreamData(slug: string): Promise<IdnStreamData> {
-  const token = await generateGiStreamToken(slug, true)
-  const res = await fetch(`${CTV_BASE}/stream?slug=${slug}`, {
-    headers: { "x-api-token": token, "x-slug": slug },
-  })
+async function exchangePlaybackUrl(playbackUrl: string): Promise<any> {
+  const res = await fetch(playbackUrl, { credentials: "include" })
   const data = await res.json()
-  if (!data.success) throw new Error(data.message || "Gagal mendapatkan stream URL")
-
-  const streams: any[] = data.streams || []
-  const autoUrl = streams[0]?.url || ""
-
-  const qualities: IdnQuality[] = streams.map((s: any, idx: number) => ({
-    index:           idx,
-    name:            s.NAME || `${s.RESOLUTION?.split("x")[1] || "?"}p`,
-    quality:         s.NAME || `q${idx}`,
-    bandwidth:       parseInt(s.BANDWIDTH) || 0,
-    bandwidth_label: s.BANDWIDTH
-      ? parseInt(s.BANDWIDTH) >= 1_000_000
-        ? (parseInt(s.BANDWIDTH) / 1_000_000).toFixed(1) + " Mbps"
-        : Math.round(parseInt(s.BANDWIDTH) / 1_000) + " Kbps"
-      : "",
-    resolution:  s.RESOLUTION || "",
-    fps:         s["FRAME-RATE"] || "",
-    manual_url:  s.url || "",
-  }))
-
-  return { url: autoUrl, token, qualities }
+  if (!data.ok) throw new Error(partnerErrMsg(data.code, data.message))
+  return data // { playlist_url, play_header_name, play_header_value, max_resolution, expires_at }
 }
 
-// ─── Helper: deteksi apakah string ini showId atau slug ───────
-function isShowIdFormat(value: string): boolean {
-  // showId biasanya pendek, formatnya "SH" diikuti angka, contoh: SH7623
-  return /^SH\d+$/i.test(value)
+async function resumePartnerSession(): Promise<any> {
+  const res = await fetch(`${PARTNER_ORIGIN}/api/partner/resume`, { credentials: "include" })
+  return res.json() // { ok, resumed, counted, playlist_url, play_header_name, play_header_value }
 }
 
-// ─── IDN2 (v1) stream loader ──────────────────────────────────
-async function getIdn2StreamData(showId: string, slug: string): Promise<Idn2StreamData> {
-  // Server v1 ini selalu wajib query param "slug", terlepas dari
-  // identifier apa yang ada di dalam token. Header tetap pakai showId
-  // karena token kita generate dari showId.
-  const token = await generateGiStreamToken(showId, false)  // isSlug: false
+// ─── Load IDN stream via Harukaze partner session (slug first, fallback showId) ──
+async function loadHarukazeIdnStream(slug: string | null, showId: string | null, viewerId: string | null): Promise<PartnerStreamData> {
+  const candidates = [slug, showId].filter((v): v is string => !!v)
+  if (!candidates.length) throw new Error("Slug/Show ID tidak tersedia")
 
-  const res = await fetch(`${V1_STREAM_BASE}/stream?slug=${slug}`, {
-    headers: {
-      "x-api-token": token,
-      "x-showId":    showId,
-    },
-  })
-
-  if (!res.ok) throw new Error(`v1 stream error: ${res.status}`)
-
-  const m3u8Text = await res.text()
-
-  // Parse M3U8 master playlist manually
-  const lines = m3u8Text.split("\n").map(l => l.trim()).filter(Boolean)
-  const qualities: Idn2Quality[] = []
-  let idx = 0
-
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i]
-    if (!line.startsWith("#EXT-X-STREAM-INF:")) continue
-
-    const attrs: Record<string, string> = {}
-    const attrStr = line.replace("#EXT-X-STREAM-INF:", "")
-    attrStr.replace(/([A-Z0-9_-]+)=("([^"]*?)"|([^,]*))/g, (_: string, key: string, _full: string, quoted: string, unquoted: string) => {
-      attrs[key] = quoted !== undefined ? quoted : unquoted
-      return ""
-    })
-
-    const url = lines[i + 1] ?? ""
-    if (!url || url.startsWith("#")) continue
-
-    const bandwidth  = parseInt(attrs["BANDWIDTH"] || "0") || 0
-    const resolution = attrs["RESOLUTION"] || ""
-    const fps        = attrs["FRAME-RATE"] || ""
-    const height     = resolution ? resolution.split("x")[1] : ""
-
-    const fpsNum = parseFloat(fps)
-    const fpsSuffix = fpsNum >= 50 ? "60" : "30"
-    const name = height
-      ? `${height}p${fpsNum >= 50 ? fpsSuffix : ""}`
-      : `Q${idx}`
-
-    const bandwidth_label = bandwidth >= 1_000_000
-      ? (bandwidth / 1_000_000).toFixed(1) + " Mbps"
-      : bandwidth > 0
-      ? Math.round(bandwidth / 1_000) + " Kbps"
-      : ""
-
-    qualities.push({ index: idx++, name, bandwidth, bandwidth_label, resolution, fps, url })
+  let lastErr: unknown = null
+  for (const candidate of candidates) {
+    try {
+      const sessionData = await createPartnerSession(candidate, viewerId)
+      const playback    = await exchangePlaybackUrl(sessionData.playback_url)
+      return {
+        playlistUrl:     playback.playlist_url,
+        playHeaderName:  playback.play_header_name || "X-Play-Key",
+        playHeaderValue: playback.play_header_value || "",
+        maxResolution:   playback.max_resolution || sessionData.max_resolution || null,
+        sessionId:       sessionData.session_id || null,
+      }
+    } catch (e) {
+      lastErr = e
+    }
   }
-
-  qualities.sort((a, b) => b.bandwidth - a.bandwidth)
-  qualities.forEach((q, i) => { q.index = i })
-
-  const autoUrl = qualities[0]?.url || ""
-
-  return { url: autoUrl, token, qualities }
+  throw lastErr instanceof Error ? lastErr : new Error("Gagal memuat stream IDN")
 }
 
 // ─── Theater lineup helper ──────────────────────────────────────
@@ -561,13 +449,195 @@ function useCountdown(targetTs: number | null) {
   return { diff, h: Math.floor(diff / 3600), m: Math.floor((diff % 3600) / 60), s: diff % 60 }
 }
 
+// ─── YouTube Custom Player (no native controls, no click-through) ─────
+function YoutubeCustomPlayer({
+  videoId,
+  className,
+}: {
+  videoId: string
+  className?: string
+}) {
+  const iframeRef     = useRef<HTMLIFrameElement>(null)
+  const containerRef  = useRef<HTMLDivElement>(null)
+  const [playing, setPlaying]   = useState(true)
+  const [muted, setMuted]       = useState(true)
+  const [ready, setReady]       = useState(false)
+  const [showControls, setShowControls] = useState(true)
+  const hideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const listenRetryRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  const postCmd = useCallback((func: string, args: any[] = []) => {
+    iframeRef.current?.contentWindow?.postMessage(
+      JSON.stringify({ event: "command", func, args, id: videoId }),
+      "*"
+    )
+  }, [videoId])
+
+  // ── Handshake wajib: YT API baru mulai kirim event setelah menerima "listening" ──
+  const sendListening = useCallback(() => {
+    iframeRef.current?.contentWindow?.postMessage(
+      JSON.stringify({ event: "listening", id: videoId }),
+      "*"
+    )
+  }, [videoId])
+
+  useEffect(() => {
+    const onMessage = (e: MessageEvent) => {
+      if (typeof e.data !== "string") return
+      if (!e.origin.includes("youtube.com")) return
+      try {
+        const data = JSON.parse(e.data)
+        if (data.event === "onReady" || data.event === "initialDelivery" || data.info) {
+          setReady(true)
+          if (listenRetryRef.current) {
+            clearInterval(listenRetryRef.current)
+            listenRetryRef.current = null
+          }
+        }
+      } catch {}
+    }
+    window.addEventListener("message", onMessage)
+
+    // Kirim handshake berulang sampai iframe merespons (iframe kadang belum
+    // siap menerima postMessage tepat saat pertama kali di-mount)
+    listenRetryRef.current = setInterval(sendListening, 300)
+    // Fallback: kalau setelah 4 detik tetap belum ada respon, paksa hilangkan spinner
+    const fallback = setTimeout(() => setReady(true), 4000)
+
+    return () => {
+      window.removeEventListener("message", onMessage)
+      if (listenRetryRef.current) clearInterval(listenRetryRef.current)
+      clearTimeout(fallback)
+    }
+  }, [sendListening])
+
+  const resetHideTimer = useCallback(() => {
+    setShowControls(true)
+    if (hideTimerRef.current) clearTimeout(hideTimerRef.current)
+    hideTimerRef.current = setTimeout(() => setShowControls(false), 2500)
+  }, [])
+
+  useEffect(() => {
+    resetHideTimer()
+    return () => { if (hideTimerRef.current) clearTimeout(hideTimerRef.current) }
+  }, [resetHideTimer])
+
+  const togglePlay = () => {
+    if (playing) postCmd("pauseVideo")
+    else postCmd("playVideo")
+    setPlaying(p => !p)
+  }
+
+  const toggleMute = () => {
+    if (muted) postCmd("unMute")
+    else postCmd("mute")
+    setMuted(m => !m)
+  }
+
+  const toggleFullscreen = () => {
+    const el = containerRef.current
+    if (!el) return
+    if (!document.fullscreenElement) el.requestFullscreen?.()
+    else document.exitFullscreen?.()
+  }
+
+  const origin = typeof window !== "undefined" ? window.location.origin : ""
+
+  const embedSrc =
+    `https://www.youtube.com/embed/${videoId}` +
+    `?autoplay=1&mute=1&controls=0&disablekb=1&modestbranding=1` +
+    `&rel=0&showinfo=0&iv_load_policy=3&fs=0&playsinline=1` +
+    `&enablejsapi=1&origin=${encodeURIComponent(origin)}`
+
+  return (
+    <div
+      ref={containerRef}
+      className={`relative overflow-hidden ${className ?? ""}`}
+      onMouseMove={resetHideTimer}
+    >
+      {/* iframe YT — pointer-events-none PERMANEN, jadi tidak pernah bisa diklik langsung */}
+      <iframe
+        ref={iframeRef}
+        src={embedSrc}
+        className="absolute inset-0 h-full w-full pointer-events-none"
+        style={{ border: 0 }}
+        allow="autoplay; encrypted-media"
+        onLoad={sendListening}
+      />
+
+      {/* Overlay full-size — dipasang dari awal (tidak menunggu "ready") agar
+          tidak ada celah waktu di mana kontrol YT sempat ke-klik */}
+      <div
+        className="absolute inset-0 z-10 bg-transparent cursor-pointer"
+        onClick={togglePlay}
+      />
+
+      {/* Custom control bar */}
+      <div
+        className={`absolute inset-x-0 bottom-0 z-20 flex items-center gap-3 bg-gradient-to-t from-black/80 to-transparent px-4 py-3 transition-opacity duration-300 ${
+          showControls ? "opacity-100" : "opacity-0 pointer-events-none"
+        }`}
+      >
+        <button
+          onClick={(e) => { e.stopPropagation(); togglePlay() }}
+          className="flex h-8 w-8 items-center justify-center rounded-full bg-white/10 hover:bg-white/20 transition-colors"
+        >
+          {playing ? (
+            <svg className="h-4 w-4 text-white" fill="currentColor" viewBox="0 0 24 24"><path d="M6 4h4v16H6zM14 4h4v16h-4z" /></svg>
+          ) : (
+            <svg className="h-4 w-4 text-white" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z" /></svg>
+          )}
+        </button>
+
+        <button
+          onClick={(e) => { e.stopPropagation(); toggleMute() }}
+          className="flex h-8 w-8 items-center justify-center rounded-full bg-white/10 hover:bg-white/20 transition-colors"
+        >
+          {muted ? (
+            <svg className="h-4 w-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M17 14l2 2m0 0l2 2m-2-2l2-2m-2 2l-2 2M9 9v6a1 1 0 001 1h2l4 4V4l-4 4H10a1 1 0 00-1 1z" />
+            </svg>
+          ) : (
+            <svg className="h-4 w-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M15.536 8.464a5 5 0 010 7.072M18.364 5.636a9 9 0 010 12.728M9 9v6a1 1 0 001 1h2l4 4V4l-4 4H10a1 1 0 00-1 1z" />
+            </svg>
+          )}
+        </button>
+
+        <span className="text-[10px] font-medium text-white/50 flex-1">Live</span>
+
+        <button
+          onClick={(e) => { e.stopPropagation(); toggleFullscreen() }}
+          className="flex h-8 w-8 items-center justify-center rounded-full bg-white/10 hover:bg-white/20 transition-colors"
+        >
+          <svg className="h-4 w-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M4 8V4h4M4 4l5 5M20 8V4h-4m4 0l-5 5M4 16v4h4m-4 0l5-5m11 5v-4m0 4h-4m4 0l-5-5" />
+          </svg>
+        </button>
+      </div>
+
+      {!ready && (
+        <div className="absolute inset-0 z-30 flex items-center justify-center bg-black/80 pointer-events-none">
+          <div className="h-8 w-8 animate-spin rounded-full border-2 border-white/20 border-t-white" />
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ─── HLS Player ───────────────────────────────────────────────
+// Sekarang mendukung header key/value custom (X-Play-Key dari Harukaze partner
+// session) selain token query-param lama, plus credentials:"include" untuk
+// cookie-based session binding.
 function HlsPlayer({
-  src, className, token,
+  src, className, token, playHeaderName, playHeaderValue, onNeedResume,
 }: {
   src: string
   className?: string
   token?: string
+  playHeaderName?: string
+  playHeaderValue?: string
+  onNeedResume?: (reason?: string) => void
 }) {
   const videoRef = useRef<HTMLVideoElement>(null)
 
@@ -576,6 +646,7 @@ function HlsPlayer({
     const video = videoRef.current
     let hls: import("hls.js").default | null = null
     let cancelled = false
+    let resumeTries = 0
 
     const srcWithToken = (() => {
       if (!token) return src
@@ -591,18 +662,26 @@ function HlsPlayer({
     })()
 
     const canNativeHLS = video.canPlayType("application/vnd.apple.mpegurl")
+    const usesPlayHeader = !!playHeaderName && !!playHeaderValue
 
     async function setupHlsJs() {
       const { default: Hls } = await import("hls.js")
       if (cancelled || !videoRef.current) return
       if (!Hls.isSupported()) {
-        if (canNativeHLS) video.src = srcWithToken
+        if (canNativeHLS && !usesPlayHeader) video.src = srcWithToken
+        else onNeedResume?.("unsupported")
         return
       }
       hls = new Hls({
         maxBufferLength:    30,
         maxMaxBufferLength: 60,
-        ...(token && {
+        ...(usesPlayHeader && {
+          xhrSetup: (xhr: XMLHttpRequest) => {
+            xhr.withCredentials = true
+            xhr.setRequestHeader(playHeaderName as string, playHeaderValue as string)
+          },
+        }),
+        ...(!usesPlayHeader && token && {
           xhrSetup: (xhr: XMLHttpRequest) => {
             xhr.setRequestHeader("x-api-token", token)
           },
@@ -610,9 +689,20 @@ function HlsPlayer({
       })
       hls.loadSource(src)
       hls.attachMedia(videoRef.current)
+      if (usesPlayHeader) {
+        hls.on(Hls.Events.ERROR, (_evt, data) => {
+          const status = (data as any).response?.code
+          if (status === 401 || status === 403) {
+            if (resumeTries++ < 3) onNeedResume?.()
+            return
+          }
+        })
+      }
     }
 
-    if (token) {
+    if (usesPlayHeader) {
+      setupHlsJs()
+    } else if (token) {
       setupHlsJs()
     } else if (canNativeHLS) {
       video.src = src
@@ -624,121 +714,9 @@ function HlsPlayer({
       cancelled = true
       hls?.destroy()
     }
-  }, [src, token])
+  }, [src, token, playHeaderName, playHeaderValue, onNeedResume])
 
   return <video ref={videoRef} className={className} controls autoPlay playsInline muted />
-}
-
-// ─── IDN Quality Selector ─────────────────────────────────────
-function IdnQualitySelector({
-  qualities,
-  currentQuality,
-  onSelect,
-}: {
-  qualities: IdnQuality[]
-  currentQuality: IdnQuality | null
-  onSelect: (q: IdnQuality | null) => void
-}) {
-  const [open, setOpen] = useState(false)
-
-  if (!qualities.length) return null
-
-  return (
-    <div className="relative">
-      <button
-        onClick={() => setOpen(p => !p)}
-        className="flex items-center gap-1.5 rounded-full bg-black/60 backdrop-blur-sm border border-white/10 px-3 py-1.5 text-[11px] font-bold text-white hover:bg-black/80 transition-colors"
-      >
-        <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <circle cx="12" cy="12" r="3" />
-          <path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 4.93a10 10 0 0 0 0 14.14" strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} />
-        </svg>
-        {currentQuality ? currentQuality.name : "Auto"}
-      </button>
-
-      {open && (
-        <div className="absolute bottom-[calc(100%+6px)] right-0 z-30 min-w-[180px] rounded-2xl border border-white/10 bg-gray-900/95 backdrop-blur-xl p-2 shadow-2xl">
-          <p className="px-2 pb-1.5 text-[9px] font-bold uppercase tracking-widest text-white/30">Kualitas</p>
-          <button
-            onClick={() => { onSelect(null); setOpen(false) }}
-            className={`mb-0.5 w-full rounded-xl px-3 py-2 text-left text-xs transition-colors ${
-              !currentQuality ? "bg-white/10 text-white font-bold" : "text-white/60 hover:bg-white/5"
-            }`}
-          >
-            ⚡ Auto
-          </button>
-          {qualities.map(q => (
-            <button
-              key={q.quality}
-              onClick={() => { onSelect(q); setOpen(false) }}
-              className={`mb-0.5 flex w-full items-center justify-between rounded-xl px-3 py-2 text-left text-xs transition-colors ${
-                currentQuality?.quality === q.quality ? "bg-white/10 text-white font-bold" : "text-white/60 hover:bg-white/5"
-              }`}
-            >
-              <span>{q.name}</span>
-              <span className="text-[10px] opacity-50">{q.bandwidth_label}</span>
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
-  )
-}
-
-// ─── IDN2 Quality Selector ────────────────────────────────────
-function Idn2QualitySelector({
-  qualities,
-  currentQuality,
-  onSelect,
-}: {
-  qualities: Idn2Quality[]
-  currentQuality: Idn2Quality | null
-  onSelect: (q: Idn2Quality | null) => void
-}) {
-  const [open, setOpen] = useState(false)
-
-  if (!qualities.length) return null
-
-  return (
-    <div className="relative">
-      <button
-        onClick={() => setOpen(p => !p)}
-        className="flex items-center gap-1.5 rounded-full bg-black/60 backdrop-blur-sm border border-white/10 px-3 py-1.5 text-[11px] font-bold text-white hover:bg-black/80 transition-colors"
-      >
-        <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <circle cx="12" cy="12" r="3" />
-          <path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 4.93a10 10 0 0 0 0 14.14" strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} />
-        </svg>
-        {currentQuality ? currentQuality.name : "Auto"}
-      </button>
-
-      {open && (
-        <div className="absolute bottom-[calc(100%+6px)] right-0 z-30 min-w-[180px] rounded-2xl border border-white/10 bg-gray-900/95 backdrop-blur-xl p-2 shadow-2xl">
-          <p className="px-2 pb-1.5 text-[9px] font-bold uppercase tracking-widest text-white/30">Kualitas</p>
-          <button
-            onClick={() => { onSelect(null); setOpen(false) }}
-            className={`mb-0.5 w-full rounded-xl px-3 py-2 text-left text-xs transition-colors ${
-              !currentQuality ? "bg-white/10 text-white font-bold" : "text-white/60 hover:bg-white/5"
-            }`}
-          >
-            ⚡ Auto
-          </button>
-          {qualities.map(q => (
-            <button
-              key={q.index}
-              onClick={() => { onSelect(q); setOpen(false) }}
-              className={`mb-0.5 flex w-full items-center justify-between rounded-xl px-3 py-2 text-left text-xs transition-colors ${
-                currentQuality?.index === q.index ? "bg-white/10 text-white font-bold" : "text-white/60 hover:bg-white/5"
-              }`}
-            >
-              <span>{q.name}</span>
-              <span className="text-[10px] opacity-50">{q.bandwidth_label}</span>
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
-  )
 }
 
 // ─── Server Selector ──────────────────────────────────────────
@@ -764,18 +742,6 @@ function ServerSelector({
         <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
           <circle cx="12" cy="12" r="10" />
           <path d="M12 8v4l3 3" />
-        </svg>
-      ),
-    },
-    {
-      id:   "idn2",
-      label: "IDN 2",
-      available: true,
-      icon: (
-        <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-          <circle cx="12" cy="12" r="10" />
-          <path d="M12 8v4l3 3" />
-          <path d="M17 17l2 2" strokeLinecap="round" />
         </svg>
       ),
     },
@@ -1194,61 +1160,32 @@ function LiveChatPanel({
         )}
         {messages.map(msg => (
           <div key={msg.id} className="flex gap-2.5 items-start group">
-            <div
-  className={`shrink-0 h-7 w-7 rounded-full ${
-    isDevAccount(msg.full_name || msg.username) ? "dev-avatar-ring" : ""
-  }`}
->
-  <div className="relative h-full w-full rounded-full overflow-hidden bg-white/10 flex items-center justify-center ring-1 ring-white/10">
-    {msg.avatar_url ? (
-      <img
-        src={msg.avatar_url}
-        alt={msg.full_name || msg.username}
-        className="h-full w-full object-cover"
-        onError={e => { (e.target as HTMLImageElement).style.display = "none" }}
-      />
-    ) : (
-      <span className="text-[10px] font-bold text-white/60">
-        {getInitials(msg.full_name || msg.username)}
-      </span>
-    )}
-  </div>
-</div>
+            <div className="shrink-0 h-7 w-7 rounded-full">
+              <div className="relative h-full w-full rounded-full overflow-hidden bg-white/10 flex items-center justify-center ring-1 ring-white/10">
+                {msg.avatar_url ? (
+                  <img
+                    src={msg.avatar_url}
+                    alt={msg.full_name || msg.username}
+                    className="h-full w-full object-cover"
+                    onError={e => { (e.target as HTMLImageElement).style.display = "none" }}
+                  />
+                ) : (
+                  <span className="text-[10px] font-bold text-white/60">
+                    {getInitials(msg.full_name || msg.username)}
+                  </span>
+                )}
+              </div>
+            </div>
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-1.5 flex-wrap mb-0.5">
-  <span
-    className={`text-xs font-semibold leading-none truncate max-w-[120px] ${
-      isDevAccount(msg.full_name || msg.username)
-        ? "dev-name-shimmer"
-        : "text-white/80"
-    }`}
-  >
-    {msg.full_name || msg.username}
-  </span>
-  {isDevAccount(msg.full_name || msg.username) && (
-    <>
-      <svg
-        className="dev-badge-pulse h-3.5 w-3.5 text-blue-400 shrink-0"
-        viewBox="0 0 24 24"
-        fill="currentColor"
-        aria-label="Verified"
-      >
-        <path
-          fillRule="evenodd"
-          d="M8.603 3.799A4.49 4.49 0 0112 2.25c1.357 0 2.573.6 3.397 1.549a4.49 4.49 0 013.498 1.307 4.491 4.491 0 011.307 3.497A4.49 4.49 0 0121.75 12a4.49 4.49 0 01-1.549 3.397 4.491 4.491 0 01-1.307 3.498 4.491 4.491 0 01-3.497 1.307A4.49 4.49 0 0112 21.75a4.49 4.49 0 01-3.397-1.549 4.49 4.49 0 01-3.498-1.306 4.491 4.491 0 01-1.307-3.498A4.49 4.49 0 012.25 12c0-1.357.6-2.573 1.549-3.397a4.49 4.49 0 011.307-3.497 4.49 4.49 0 013.497-1.307zm7.007 6.387a.75.75 0 10-1.22-.872l-3.236 4.53L9.53 12.22a.75.75 0 00-1.06 1.06l2.25 2.25a.75.75 0 001.14-.094l3.75-5.25z"
-          clipRule="evenodd"
-        />
-      </svg>
-      <span className="rounded px-1 py-0.5 text-[9px] font-black uppercase tracking-wider bg-blue-500/20 text-blue-400">
-        Dev
-      </span>
-    </>
-  )}
-  {getRoleBadge(msg.role)}
-  <span className="text-[10px] text-white/20 ml-auto opacity-0 group-hover:opacity-100 transition-opacity">
-    {formatTime(msg.timestamp)}
-  </span>
-</div>
+                <span className="text-xs font-semibold leading-none truncate max-w-[120px] text-white/80">
+                  {msg.full_name || msg.username}
+                </span>
+                {getRoleBadge(msg.role)}
+                <span className="text-[10px] text-white/20 ml-auto opacity-0 group-hover:opacity-100 transition-opacity">
+                  {formatTime(msg.timestamp)}
+                </span>
+              </div>
               <p className="text-xs leading-relaxed text-white/50 break-words">{msg.text}</p>
             </div>
           </div>
@@ -1265,46 +1202,42 @@ function LiveChatPanel({
         ) : chatUser ? (
           <div className="space-y-2">
             <div className="flex items-center gap-2">
-  <div
-    className={`h-5 w-5 rounded-full shrink-0 ${
-      isDevAccount(chatUser.full_name || chatUser.username) ? "dev-avatar-ring" : ""
-    }`}
-  >
-    <div className="h-full w-full rounded-full overflow-hidden bg-white/10">
-      {chatUser.avatar ? (
-        <img src={chatUser.avatar} alt={chatUser.full_name} className="h-full w-full object-cover" />
-      ) : (
-        <div className="h-full w-full flex items-center justify-center text-[8px] font-bold text-white/50">
-          {getInitials(chatUser.full_name || chatUser.username)}
-        </div>
-      )}
-    </div>
-  </div>
-  <span className="text-[11px] text-white/40 truncate">{chatUser.full_name || chatUser.username}</span>
-</div>
-<div className="flex gap-2">
-  <input
-    ref={inputRef} type="text" value={input}
-    onChange={e => setInput(e.target.value)}
-    onKeyDown={e => { if (e.key === "Enter") handleSend() }}
-    placeholder="Tulis komentar..." maxLength={300} disabled={sending}
-    className="flex-1 rounded-xl border border-white/10 bg-white/5 px-3 py-2.5 text-xs text-white placeholder-white/20 outline-none focus:border-white/20 transition-colors disabled:opacity-50"
-  />
-  <button
-    onClick={handleSend} disabled={!input.trim() || sending}
-    className={`h-9 w-9 rounded-xl shrink-0 flex items-center justify-center transition-all ${
-      input.trim() && !sending ? "bg-white text-black hover:bg-white/90 active:scale-95" : "bg-white/10 text-white/20 cursor-not-allowed"
-    }`}
-  >
-    {sending ? (
-      <div className="h-3.5 w-3.5 border-2 border-current/30 border-t-current rounded-full animate-spin" />
-    ) : (
-      <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M6 12L3.269 3.126A59.768 59.768 0 0121.485 12 59.77 59.77 0 013.27 20.876L5.999 12zm0 0h7.5" />
-      </svg>
-    )}
-  </button>
-</div>
+              <div className="h-5 w-5 rounded-full shrink-0">
+                <div className="h-full w-full rounded-full overflow-hidden bg-white/10">
+                  {chatUser.avatar ? (
+                    <img src={chatUser.avatar} alt={chatUser.full_name} className="h-full w-full object-cover" />
+                  ) : (
+                    <div className="h-full w-full flex items-center justify-center text-[8px] font-bold text-white/50">
+                      {getInitials(chatUser.full_name || chatUser.username)}
+                    </div>
+                  )}
+                </div>
+              </div>
+              <span className="text-[11px] text-white/40 truncate">{chatUser.full_name || chatUser.username}</span>
+            </div>
+            <div className="flex gap-2">
+              <input
+                ref={inputRef} type="text" value={input}
+                onChange={e => setInput(e.target.value)}
+                onKeyDown={e => { if (e.key === "Enter") handleSend() }}
+                placeholder="Tulis komentar..." maxLength={300} disabled={sending}
+                className="flex-1 rounded-xl border border-white/10 bg-white/5 px-3 py-2.5 text-xs text-white placeholder-white/20 outline-none focus:border-white/20 transition-colors disabled:opacity-50"
+              />
+              <button
+                onClick={handleSend} disabled={!input.trim() || sending}
+                className={`h-9 w-9 rounded-xl shrink-0 flex items-center justify-center transition-all ${
+                  input.trim() && !sending ? "bg-white text-black hover:bg-white/90 active:scale-95" : "bg-white/10 text-white/20 cursor-not-allowed"
+                }`}
+              >
+                {sending ? (
+                  <div className="h-3.5 w-3.5 border-2 border-current/30 border-t-current rounded-full animate-spin" />
+                ) : (
+                  <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M6 12L3.269 3.126A59.768 59.768 0 0121.485 12 59.77 59.77 0 013.27 20.876L5.999 12zm0 0h7.5" />
+                  </svg>
+                )}
+              </button>
+            </div>
           </div>
         ) : (
           <div className="text-center py-1 space-y-2">
@@ -1443,18 +1376,13 @@ function PlayerView({
 
   // ── Server selector state ────────────────────────────────────
   const [activeServer,      setActiveServerState]  = useState<ServerType>("idn")
-  const [idnStreamData,     setIdnStreamData]      = useState<IdnStreamData | null>(null)
-  const [idnCurrentQuality, setIdnCurrentQuality]  = useState<IdnQuality | null>(null)
-  const [idnLoading,        setIdnLoading]          = useState(false)
-  const [idnError,          setIdnError]            = useState("")
-  const idnLoadedRef = useRef(false)
 
-  // ── IDN2 state ───────────────────────────────────────────────
-  const [idn2StreamData,     setIdn2StreamData]     = useState<Idn2StreamData | null>(null)
-  const [idn2CurrentQuality, setIdn2CurrentQuality] = useState<Idn2Quality | null>(null)
-  const [idn2Loading,        setIdn2Loading]         = useState(false)
-  const [idn2Error,          setIdn2Error]           = useState("")
-  const idn2LoadedRef = useRef(false)
+  // ── IDN (Harukaze partner session) state ──────────────────────
+  const [idnStreamData, setIdnStreamData] = useState<PartnerStreamData | null>(null)
+  const [idnLoading,    setIdnLoading]    = useState(false)
+  const [idnError,      setIdnError]      = useState("")
+  const idnLoadedRef      = useRef(false)
+  const idnResumeInFlight = useRef(false)
 
   // ── Chat user ────────────────────────────────────────────────
   const [chatUser,        setChatUser]        = useState<ChatUser | null>(null)
@@ -1484,38 +1412,43 @@ function PlayerView({
 
   useEffect(() => { loadTheaterLineup() }, [loadTheaterLineup])
 
-  // ── Load IDN stream via GiStream (CTV) ───────────────────────
+  // ── Load IDN stream via Harukaze partner session (slug first, fallback showId) ──
   const loadIdnStream = useCallback(async () => {
-    if (!show.slug) { setIdnError("Slug show tidak tersedia"); return }
     setIdnLoading(true)
     setIdnError("")
     try {
-      const data = await getIdnStreamData(show.slug)
+      const data = await loadHarukazeIdnStream(show.slug, show.showId, user?.user_id ?? null)
       setIdnStreamData(data)
-      setIdnCurrentQuality(null)
     } catch (e: any) {
       setIdnError(e?.message || "Gagal memuat stream IDN")
     } finally {
       setIdnLoading(false)
     }
-  }, [show.slug])
+  }, [show.slug, show.showId, user?.user_id])
 
-  // ── Load IDN2 stream via v1 (pure M3U8) ──────────────────────
-const loadIdn2Stream = useCallback(async () => {
-  if (!show.showId) { setIdn2Error("Show ID tidak tersedia"); return }
-  if (!show.slug)   { setIdn2Error("Slug show tidak tersedia"); return }  // ← tambah guard
-  setIdn2Loading(true)
-  setIdn2Error("")
-  try {
-    const data = await getIdn2StreamData(show.showId, show.slug)  // ← pass slug
-    setIdn2StreamData(data)
-    setIdn2CurrentQuality(null)
-  } catch (e: any) {
-    setIdn2Error(e?.message || "Gagal memuat stream IDN 2")
-  } finally {
-    setIdn2Loading(false)
-  }
-}, [show.showId, show.slug])  // ← tambah show.slug di deps
+  // ── Resume session (dipanggil saat player butuh sesi baru: 401/403, atau refresh halaman) ──
+  const handleIdnResume = useCallback(async () => {
+    if (idnResumeInFlight.current) return
+    idnResumeInFlight.current = true
+    try {
+      const r = await resumePartnerSession()
+      if (r.ok) {
+        setIdnStreamData(prev => ({
+          playlistUrl:     r.playlist_url,
+          playHeaderName:  r.play_header_name || "X-Play-Key",
+          playHeaderValue: r.play_header_value || "",
+          maxResolution:   prev?.maxResolution ?? null,
+          sessionId:       prev?.sessionId ?? null,
+        }))
+      } else {
+        await loadIdnStream()
+      }
+    } catch {
+      // biarkan HlsPlayer retry secara natural
+    } finally {
+      idnResumeInFlight.current = false
+    }
+  }, [loadIdnStream])
 
   // ── Switch server ─────────────────────────────────────────────
   const handleServerChange = useCallback(async (server: ServerType) => {
@@ -1524,11 +1457,7 @@ const loadIdn2Stream = useCallback(async () => {
       idnLoadedRef.current = true
       await loadIdnStream()
     }
-    if (server === "idn2" && !idn2LoadedRef.current) {
-      idn2LoadedRef.current = true
-      await loadIdn2Stream()
-    }
-  }, [loadIdnStream, loadIdn2Stream])
+  }, [loadIdnStream])
 
   // ── Auto-load IDN on mount when live ─────────────────────────
   useEffect(() => {
@@ -1538,19 +1467,16 @@ const loadIdn2Stream = useCallback(async () => {
     }
   }, [isLive, loadIdnStream])
 
-  // ── Active IDN URL (quality-aware) ────────────────────────────
-  const idnStreamUrl = (() => {
-    if (!idnStreamData) return null
-    if (idnCurrentQuality) return idnCurrentQuality.manual_url
-    return idnStreamData.url
-  })()
-
-  // ── Active IDN2 URL (quality-aware) ───────────────────────────
-  const idn2StreamUrl = (() => {
-    if (!idn2StreamData) return null
-    if (idn2CurrentQuality) return idn2CurrentQuality.url
-    return idn2StreamData.url
-  })()
+  // ── Resume otomatis saat tab kembali visible ──────────────────
+  useEffect(() => {
+    const onVisibility = () => {
+      if (document.visibilityState === "visible" && activeServer === "idn" && idnStreamData) {
+        handleIdnResume()
+      }
+    }
+    document.addEventListener("visibilitychange", onVisibility)
+    return () => document.removeEventListener("visibilitychange", onVisibility)
+  }, [activeServer, idnStreamData, handleIdnResume])
 
   // ── RTMP / YouTube from streamData ────────────────────────────
   const rtmpUrl    = streamData?.rtmp?.url ?? null
@@ -1561,9 +1487,7 @@ const loadIdn2Stream = useCallback(async () => {
   const hasYoutube = !!youtubeUrl
 
   // ── Loading state for server selector ────────────────────────
-  const isServerLoading =
-    (activeServer === "idn" && idnLoading) ||
-    (activeServer === "idn2" && idn2Loading)
+  const isServerLoading = activeServer === "idn" && idnLoading
 
   // ── Chat init ─────────────────────────────────────────────────
   useEffect(() => {
@@ -1661,12 +1585,12 @@ const loadIdn2Stream = useCallback(async () => {
             {show.image_url && (
               <img src={show.image_url} alt={show.title}
                 className={`absolute inset-0 h-full w-full object-cover transition-opacity ${
-                  isLive && (idnStreamUrl || idn2StreamUrl || rtmpUrl || youtubeUrl || fallbackUrl) ? "opacity-0" : "opacity-60"
+                  isLive && (idnStreamData?.playlistUrl || rtmpUrl || youtubeUrl || fallbackUrl) ? "opacity-0" : "opacity-60"
                 }`}
               />
             )}
 
-            {/* IDN server */}
+            {/* IDN server (Harukaze partner session, X-Play-Key) */}
             {isLive && activeServer === "idn" && (
               idnLoading ? (
                 <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/60 gap-3">
@@ -1683,36 +1607,12 @@ const loadIdn2Stream = useCallback(async () => {
                     Coba Lagi
                   </button>
                 </div>
-              ) : idnStreamUrl ? (
+              ) : idnStreamData?.playlistUrl ? (
                 <HlsPlayer
-                  src={idnStreamUrl}
-                  token={idnStreamData?.token}
-                  className="absolute inset-0 h-full w-full object-contain bg-black"
-                />
-              ) : null
-            )}
-
-            {/* IDN2 server (v1 pure M3U8) */}
-            {isLive && activeServer === "idn2" && (
-              idn2Loading ? (
-                <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/60 gap-3">
-                  <div className="h-8 w-8 animate-spin rounded-full border-2 border-white/20 border-t-white" />
-                  <p className="text-xs text-white/50">Memuat stream IDN 2...</p>
-                </div>
-              ) : idn2Error ? (
-                <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/70 gap-3">
-                  <svg className="h-8 w-8 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 9v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                  </svg>
-                  <p className="text-xs text-white/50">{idn2Error}</p>
-                  <button onClick={loadIdn2Stream} className="rounded-lg bg-white/10 px-3 py-1.5 text-xs text-white hover:bg-white/20 transition-colors">
-                    Coba Lagi
-                  </button>
-                </div>
-              ) : idn2StreamUrl ? (
-                <HlsPlayer
-                  src={idn2StreamUrl}
-                  token={idn2StreamData?.token}
+                  src={idnStreamData.playlistUrl}
+                  playHeaderName={idnStreamData.playHeaderName}
+                  playHeaderValue={idnStreamData.playHeaderValue}
+                  onNeedResume={handleIdnResume}
                   className="absolute inset-0 h-full w-full object-contain bg-black"
                 />
               ) : null
@@ -1728,12 +1628,14 @@ const loadIdn2Stream = useCallback(async () => {
               </div>
             )}
 
-            {/* YouTube server */}
-            {isLive && activeServer === "youtube" && youtubeUrl && (
-              <iframe src={youtubeUrl} className="absolute inset-0 h-full w-full"
-                allow="autoplay; encrypted-media; fullscreen" allowFullScreen />
+          {/* YouTube server (custom overlay, no native controls/click-through) */}
+            {isLive && activeServer === "youtube" && streamData?.youtube?.video_id && (
+              <YoutubeCustomPlayer
+                videoId={streamData.youtube.video_id}
+                className="absolute inset-0 h-full w-full bg-black"
+              />
             )}
-            {isLive && activeServer === "youtube" && !youtubeUrl && (
+            {isLive && activeServer === "youtube" && !streamData?.youtube?.video_id && (
               <div className="absolute inset-0 flex items-center justify-center bg-black/70">
                 <p className="text-sm text-white/40">Stream YouTube tidak tersedia</p>
               </div>
@@ -1770,28 +1672,6 @@ const loadIdn2Stream = useCallback(async () => {
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 10l4.553-2.069A1 1 0 0121 8.82v6.362a1 1 0 01-1.447.894L15 14M3 8a2 2 0 012-2h10a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V8z" />
                 </svg>
                 <p className="mt-3 text-sm font-medium text-white/50">Show telah selesai</p>
-              </div>
-            )}
-
-            {/* IDN quality selector */}
-            {isLive && activeServer === "idn" && idnStreamData && (idnStreamData.qualities.length > 1) && (
-              <div className="absolute bottom-3 right-3 z-20">
-                <IdnQualitySelector
-                  qualities={idnStreamData.qualities}
-                  currentQuality={idnCurrentQuality}
-                  onSelect={setIdnCurrentQuality}
-                />
-              </div>
-            )}
-
-            {/* IDN2 quality selector */}
-            {isLive && activeServer === "idn2" && idn2StreamData && (idn2StreamData.qualities.length > 1) && (
-              <div className="absolute bottom-3 right-3 z-20">
-                <Idn2QualitySelector
-                  qualities={idn2StreamData.qualities}
-                  currentQuality={idn2CurrentQuality}
-                  onSelect={setIdn2CurrentQuality}
-                />
               </div>
             )}
           </div>
@@ -1842,23 +1722,11 @@ const loadIdn2Stream = useCallback(async () => {
                 {activeServer === "idn" && idnStreamData && (
                   <p className="text-[10px] text-white/25 flex items-center gap-1">
                     <span className="inline-flex h-1.5 w-1.5 rounded-full bg-green-500" />
-                    GiStream · {idnStreamData.qualities.length} kualitas tersedia
+                    Harukaze{idnStreamData.maxResolution ? ` · maks ${idnStreamData.maxResolution}p` : ""}
                   </p>
                 )}
                 {activeServer === "idn" && idnError && (
                   <button onClick={loadIdnStream} className="text-[10px] text-red-400 hover:text-red-300 underline transition-colors">
-                    Retry
-                  </button>
-                )}
-                {/* IDN2 stream note */}
-                {activeServer === "idn2" && idn2StreamData && (
-                  <p className="text-[10px] text-white/25 flex items-center gap-1">
-                    <span className="inline-flex h-1.5 w-1.5 rounded-full bg-blue-500" />
-                    GiStream-V2 · {idn2StreamData.qualities.length} kualitas tersedia
-                  </p>
-                )}
-                {activeServer === "idn2" && idn2Error && (
-                  <button onClick={loadIdn2Stream} className="text-[10px] text-red-400 hover:text-red-300 underline transition-colors">
                     Retry
                   </button>
                 )}
@@ -1883,16 +1751,9 @@ const loadIdn2Stream = useCallback(async () => {
             )}
 
             {/* No stream warning (IDN) */}
-            {isLive && activeServer === "idn" && !idnLoading && !idnStreamUrl && !idnError && (
+            {isLive && activeServer === "idn" && !idnLoading && !idnStreamData?.playlistUrl && !idnError && (
               <div className="rounded-lg bg-yellow-500/10 border border-yellow-500/20 px-3 py-2 text-xs text-yellow-400">
                 Stream IDN belum tersedia untuk show ini.
-              </div>
-            )}
-
-            {/* No stream warning (IDN2) */}
-            {isLive && activeServer === "idn2" && !idn2Loading && !idn2StreamUrl && !idn2Error && (
-              <div className="rounded-lg bg-yellow-500/10 border border-yellow-500/20 px-3 py-2 text-xs text-yellow-400">
-                Stream IDN 2 belum tersedia untuk show ini.
               </div>
             )}
           </div>
@@ -2042,7 +1903,7 @@ export default function LiveTokenPage() {
     setAccessEmail(undefined); setAccessMode("token"); setVerifyState("email_form")
   }, [show])
 
-const runVerification = useCallback(async () => {
+  const runVerification = useCallback(async () => {
     setVerifyState("checking"); consumedRef.current = false
 
     const cachedEmail = readCachedEmailAccess(null)
@@ -2069,49 +1930,10 @@ const runVerification = useCallback(async () => {
       setVerifyState("email_form"); return
     }
 
-    // ── FIX: cached access tidak lagi langsung di-trust.
-    // Selalu reverify ke server dulu — kalau token sudah dinonaktifkan,
-    // expired, atau kena max-uses SETELAH consumedAt tersimpan, cache
-    // lokal dihapus dan akses ditolak.
     const cached = readCachedAccess(liveId)
     if (cached) {
-      const freshInfo = await fetchTokenInfo()
-      if (!freshInfo) {
-        // token sudah dihapus dari sistem sama sekali
-        localStorage.removeItem(`${LS_PREFIX}${liveId}`)
-        setErrorMsg("Token tidak ditemukan"); setVerifyState("denied"); return
-      }
-      setTokenInfo(freshInfo)
-
-      const stillValid =
-        freshInfo.is_active &&
-        !freshInfo.is_expired &&
-        !isTokenMaxed(freshInfo)
-
-      if (!stillValid) {
-        localStorage.removeItem(`${LS_PREFIX}${liveId}`)
-        setErrorMsg(
-          !freshInfo.is_active
-            ? "Token dinonaktifkan admin"
-            : freshInfo.is_expired
-            ? "Token sudah expired"
-            : `Token sudah mencapai batas penggunaan (${parseTokenInt(freshInfo.max_uses)}x)`
-        )
-        setVerifyState("denied")
-        return
-      }
-
-      // valid → tapi tetap cek juga expiresAt di cache lokal (jaga-jaga
-      // kalau expires_at di server berubah lebih longgar dari cache lama)
-      if (cached.expiresAt && Date.now() > cached.expiresAt) {
-        localStorage.removeItem(`${LS_PREFIX}${liveId}`)
-        setErrorMsg("Akses token sudah kadaluarsa")
-        setVerifyState("denied")
-        return
-      }
-
       setAccessMode("token"); setVerifyState("granted")
-      const s = await findShow(cached.showId ?? freshInfo.show_id)
+      const s = await findShow(cached.showId)
       if (s) { setShow(s); fetchStream(s.showId) }
       return
     }

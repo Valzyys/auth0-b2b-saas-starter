@@ -8,7 +8,7 @@ const API_KEY      = "JKTCONNECT"
 
 // ─── Types ─────────────────────────────────────────────────
 
-interface SocialLink 
+interface SocialLink {
   title: string
   url:   string
 }

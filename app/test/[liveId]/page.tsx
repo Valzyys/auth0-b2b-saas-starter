@@ -18,8 +18,8 @@ const SUPABASE_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "eyJhbGciOiJIU
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY)
 
 // ─── Harukaze Partner (session-based IDN stream) ───────────────
-const PARTNER_SIGNER_BASE = process.env.NEXT_PUBLIC_PARTNER_SIGNER_BASE || "https://ap.harukaze48.my.id"
-const PARTNER_ORIGIN      = process.env.NEXT_PUBLIC_PARTNER_ORIGIN || "https://harukaze48.my.id"
+const PARTNER_SIGNER_BASE = process.env.NEXT_PUBLIC_PARTNER_SIGNER_BASE || "https://lv.team48live.my.id"
+const PARTNER_ORIGIN      = process.env.NEXT_PUBLIC_PARTNER_ORIGIN || "https://stream.team48live.my.id"
 
 const PARTNER_ERROR_MESSAGES: Record<string, string> = {
   BAD_REQUEST: "Permintaan tidak lengkap atau formatnya salah.",
